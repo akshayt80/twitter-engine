@@ -72,13 +72,49 @@ defmodule Server do
         {:noreply, map}
     end
 
-    def handle_cast({:}) do
-        {:noreply, map}
-    end
-
     ##########################
     # Server Utility functions
     ##########################
 
+    defp add_in_set(set, value) do
+        MapSet.put set, value
+    end
 
+    defp enqueue(queue, value) do
+        if :queue.member value, q do
+            queue
+        else
+            :queue.in queue, value
+        end
+    end
+
+    defp dequeue(queue) do
+        {element, queue} = :queue.out queue
+        if element == :empty do
+            {:empty, queue}
+        else
+            value = elem(element, 1)
+            {value, queue}
+        end
+    end
+
+    defp peek(queue) do
+        result = :queue.peek queue
+        if is_tuple result do
+            elem(result, 1)
+        else
+            result
+        end
+    end
+
+    defp loop(list, last, map, tweet, current) when last == current do
+        map
+    end
+
+    defp loop(list, last, map, tweet, current//None) do
+        [current| list] = list
+        set = Map.get(map, current) |> MapSet.put tweet
+        map = Map.put map, current, set
+        loop(list, last, map, current)
+    end
 end
