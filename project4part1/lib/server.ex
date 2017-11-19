@@ -13,11 +13,12 @@ defmodule Server do
     def handle_call({:register, username}, _from, map) do
         # if username unique then send ok
         # else send :error
+        # TODO:- registeredUser set becomes redundant as we have userid in main map
         if username in map["registeredUsers"] do
             {:reply, {:error, "already exists"}, map}
         else
             registeredUsers = MapSet.put(map["registeredUsers"], username)
-            map = Map.put(map, username, %{})
+            map = Map.put(map, username, %{"subscribers"=> MapSet.new, "feed"=> :queue.new})
             {:reply, {:ok, "success"}, Map.put(map, "registeredUsers", registeredUsers)}
         end
     end
@@ -65,6 +66,14 @@ defmodule Server do
         else
             {:reply, {:nomention, "None"}, map}
         end
+    end
+
+    def handle_cast({:tweet, {username, message}}, _from, map) do
+        {:noreply, map}
+    end
+
+    def handle_cast({:}) do
+        {:noreply, map}
     end
 
     ##########################
