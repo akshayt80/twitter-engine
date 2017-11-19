@@ -69,7 +69,21 @@ defmodule Server do
     end
 
     def handle_cast({:tweet, {username, message}}, _from, map) do
-        {:noreply, map}
+        hashTagMap = Map.get map, 'hashtags'
+        mentionMap = Map.get map, 'mentions'
+        components = SocialParser.extract(message,[:hashtags,:mention])
+        if Map.has_key? components, :hashtags do
+            hashTagValues = Map.get(components, :hashtags)
+            hashTagMap = loop(hashTagValues, List.last hashTagValues, hashTagMap, :tweet)
+            map = Map.put map, 'hashtags', hashTagMap
+        end
+
+        if Map.has_key? components, :mention do
+            mentionValues = Map.get(components, :mention)
+            mentionMap = loop(mentionValues, List.last mentionValues, mentionMap, :tweet)
+            map = Map.put map, 'mentions', mentionMap
+        end
+        #{:noreply, map}
     end
 
     def handle_cast({:}) do
