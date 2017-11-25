@@ -32,6 +32,16 @@ defmodule Client do
         :gen_tcp(receiver, encoded_response)
     end
 
+    defp receive_message(receiver) do
+        {:ok, data} = :gen_tcp.recv(socket, 0)
+        Poison.decode!(data)
+    end
+
+    defp blocking_send_message(receiver, data) do
+        send_message(receiver, data)
+        receive_message(receiver)
+    end
+
     defp create_message_map(action, data) do
         %{"function" => action, "data"=> data}
     end
@@ -64,30 +74,56 @@ defmodule Client do
 
     ####################
 
-    defp perform_logout(server) do
+    defp perform_logout(server, username) do
         # send logout message
+        data = %{'function'=> 'logout', 'username'=> username}
+        send_message(server, data)
         # sleep for some random time between 1 to 10 sec
+        sec = :rand.uniform(10) * 1000
+        Logger.debug "#{username} sleeping for #{sec}"
+        :timer.sleep sec
         # send login back to server
+        data = %{'function'=> 'login', 'username'=> username}
+        send_message(server, data)
         # print the feed
+        # TODO:- get the feed
     end
 
     defp perform_registration(server) do
         # pick a username
+        username = 'akshayt80'
         # send register message to server
+        data = %{'function'=> 'register', 'username'=> username}
+        data = blocking_send_message(server, data)
+        if Map.get(data, "status") != "success" do
+            Logger.debug "No success while registering"
+        end
         # send login message to server
+        data = %{'function'=> 'login', 'username'=> username}
+        send_message(server, data)
         # send subscriber message to server
     end
 
-    defp received_tweet(server) do
+    defp received_tweet(server, username, tweet) do
         # print tweet
-        # with probability od 20% do retweet
+        Logger.info "#{tweet}"
+        # with probability od 10% do retweet
+        if :rand.uniform(100) <= 10 do
+            data = %{'function'=> 'tweet', 'username'=> username, 'tweet'=> tweet}
+            send_message(server, data)
+        end
     end
 
-    defp query_server(server) do
+    defp query_server(server, key) do
         # no need to do this in simulator
-        # send message to server to get metions
+        # send message to server to get mentions
+        data = %{'function'=> 'mention', 'name'=> username}
+        send_message(server, data)
         # print all the tweets with mention
+        # TODO:- server is not sending back the tweets from feed
         # send message to server to get hashtags
+        data = %{'function'=> 'hashtags', 'hashtag'=> username}
+        send_message(server, data)
         # print all the tweets with hashtag
     end
 end
