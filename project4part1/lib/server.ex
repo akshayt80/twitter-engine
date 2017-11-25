@@ -39,9 +39,9 @@ defmodule Server do
            "register" -> GenServer.cast(:myServer, {:register, Map.get(data, "username"), worker})
            "login" -> GenServer.cast(:myServer, {:login, Map.get(data, "username"), worker})
            "logout" -> GenServer.cast(:myServer, {:logout, Map.get(data, "username"), worker}) 
-           "hashtag" -> GenServer.cast()
-           "mention" -> GenServer.cast()
-           "tweet" -> GenServer.cast()
+           "hashtag" -> GenServer.cast(:myServer, {:hashtag, Map.get(data, "hashtag"), worker})
+           "mention" -> GenServer.cast(:myServer, {:mention, Map.get(data, "mention"), worker})
+           "tweet" -> GenServer.cast(:myServer, {:tweet, Map.get(data, "username"), Map.get(data, "tweet")})
            "subscribe" -> GenServer.cast()
            "unsubscribe" -> GenServer.cast()
         end
@@ -80,7 +80,7 @@ defmodule Server do
         {:noreply, map}
     end
 
-    def handle_call({:login, username, client}, map) do
+    def handle_cast({:login, username, client}, map) do
         online_set = map['online']
         offline_set = map['offline']
         if MapSet.member?(offline_set, username) do
@@ -90,10 +90,11 @@ defmodule Server do
         online_set = MapSet.put(online_set, username)
         temp_dict = %{'online' => online_set, 'offline' => offline_set}
         map = Map.merge(map, temp_dict) 
-        {:reply, {:ok, "success"}, map}
+        #{:reply, {:ok, "success"}, map}
+        {:noreply, map}
     end
 
-    def handle_call({:logout, username}, _from, map) do
+    def handle_cast({:logout, username}, map) do
         online_set = map['online']
         offline_set = map['offline']
         if MapSet.member?(online_set, username) do
@@ -102,30 +103,37 @@ defmodule Server do
         offline_set = MapSet.put(offline_set, username)
         temp_dict = %{'online' => online_set, 'offline' => offline_set}
         map = Map.merge(map, temp_dict) 
-        {:reply, {:ok, "success"}, map}
+        #{:reply, {:ok, "success"}, map}
+        {:noreply, map}
     end
 
-    def handle_call({:hashtag, hashtag}, _from, map) do
+    def handle_cast({:hashtag, hashtag, client}, map) do
         hashtags = map["hashtags"]
         if Map.has_key? hashtags, hashtag do
             # TODO:- see how to send a list as bytes in elixir
-            {:reply, {:hashtag, Map.get(hashtags, hashtag)}, map}
+            #{:reply, {:hashtag, Map.get(hashtags, hashtag)}, map}
+            {:noreply, map}
+
         else
-            {:reply, {:nohashtag, "None"}, map}
+            #{:reply, {:nohashtag, "None"}, map}
+            {:noreply, map}
+
         end
     end
 
-    def handle_call({:mention, name}, _from, map) do
+    def handle_cast({:mention, name, client}, map) do
         mentions = map["mentions"]
         if Map.has_key? mentions, name do
             # TODO:- see how to send a list as bytes in elixir
-            {:reply, {:mention, Map.get(mentions, name)}, map}
+            #{:reply, {:mention, Map.get(mentions, name)}, map}
+            {:noreply, map}
         else
-            {:reply, {:nomention, "None"}, map}
+            #{:reply, {:nomention, "None"}, map}
+            {:noreply, map}
         end
     end
 
-    def handle_cast({:tweet, {username, tweet}}, map) do
+    def handle_cast({:tweet, username, tweet}, map) do
         hashTagMap = Map.get map, 'hashtags'
         mentionMap = Map.get map, 'mentions'
         components = SocialParser.extract(tweet,[:hashtags,:mention])
@@ -140,6 +148,14 @@ defmodule Server do
             mentionMap = loop(mentionValues, List.last(mentionValues), mentionMap, tweet)
             map = Map.put map, 'mentions', mentionMap
         end
+        {:noreply, map}
+    end
+
+    def handle_cast({:subscribe, username, subscribing}, map) do
+        {:noreply, map}
+    end
+
+    def handle_cast({:unsubscribe, username, unsubscribe}map) do
         {:noreply, map}
     end
 
