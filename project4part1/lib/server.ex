@@ -18,24 +18,25 @@ defmodule Server do
         Logger.debug "creating mentions table"
         :ets.new(:mentions, [:set, :public, :named_table, read_concurrency: true])
         Logger.debug "creating users table"
-        # {status, subscribers, feed, port}
+        # {username, status, subscribers, feed, port}
         :ets.new(:users, [:set, :public, :named_table, read_concurrency: true])
         # using this to store map of user and port
         GenServer.start_link(__MODULE__, MapSet.new, name: :myServer)
-        loop_acceptor(listen_socket, self())
+        loop_acceptor(listen_socket)
     end
 
-    defp loop_acceptor(socket, parent) do
+    defp loop_acceptor(socket) do
         Logger.debug "Ready to accept new connections"
         {:ok, worker} = :gen_tcp.accept(socket)
         
         # Spawn receive message in separate process
-        spawn fn -> serve(worker, parent) end
+        spawn fn -> serve(worker) end
         # Loop to accept new connection
-        loop_acceptor(socket, parent)
+        loop_acceptor(socket)
     end
 
-    defp serve(worker, parent) do
+    defp serve(worker) do
+        # TODO:- handle errors {:error, :closed}
         {:ok, data} = :gen_tcp.recv(worker, 0)
         data = Poison.decode!(data)
         Logger.debug "received data from worker #{inspect(worker)} data: #{inspect(data)}"
@@ -47,19 +48,19 @@ defmodule Server do
         case Map.get(data, "function") do
            "register" -> GenServer.cast(:myServer, {:register, Map.get(data, "username"), worker})
            "login" -> GenServer.cast(:myServer, {:login, Map.get(data, "username"), worker})
-           "logout" -> GenServer.cast(:myServer, {:logout, Map.get(data, "username"), worker}) 
-           "hashtag" -> GenServer.cast(:myServer, {:hashtag, Map.get(data, "hashtag"), worker})
-           "mention" -> GenServer.cast(:myServer, {:mention, Map.get(data, "mention"), worker})
+           "logout" -> GenServer.cast(:myServer, {:logout, Map.get(data, "username")})
+           "hashtag" -> GenServer.cast(:myServer, {:hashtag, Map.get(data, "hashtag"), data["username"], worker})
+           "mention" -> GenServer.cast(:myServer, {:mention, Map.get(data, "mention"), data["username"], worker})
            "tweet" -> GenServer.cast(:myServer, {:tweet, Map.get(data, "username"), Map.get(data, "tweet")})
-           "subscribe" -> GenServer.cast(:myServer, {:subscribe, data["username"], data["follow"]})
-           "unsubscribe" -> GenServer.cast()
+           "subscribe" -> GenServer.cast(:myServer, {:subscribe, data["username"], data["users"]})
+           "unsubscribe" -> GenServer.cast(:myServer, {:ubsubscribe, data["username"], data["users"]})
         end
-        serve(worker, parent)
+        serve(worker)
     end
 
     defp send_response(client, data) do
         encoded_response = Poison.encode!(data)
-        :gen_tcp(worker, encoded_response)
+        :gen_tcp.send(client, encoded_response)
     end
 
     def init(set) do
@@ -79,12 +80,13 @@ defmodule Server do
         # TODO:- registeredUser set becomes redundant as we have userid in main map
         if user != false do
             #{:reply, {:error, "already exists"}, map}
-            send_response(client, %{"status"=> "error", "message"=> "Username already exists"})
+            send_response(client, %{"function"=> "register", "status"=> "error", "message"=> "Username already exists"})
         else
             Logger.debug "added new user to set"
             set = set |> MapSet.put(username)
             #currentRegisteredUsers = map["registeredUsers"]
             #updatedRegisteredUsers = MapSet.put(currentRegisteredUsers, username)
+            # {username, status, subscribers, feed, port}
             insert(username, :online, MapSet.new, :queue.new, client)
             # map = Map.put(map, username, %{
             #                         "subscribers" => MapSet.new,
@@ -93,7 +95,7 @@ defmodule Server do
             #                     }
             #                 )
             # map = Map.put(map, "registeredUsers", updatedRegisteredUsers)
-            send_response(client, %{"status"=> "success", "message"=> "Added new user", "users"=> set})
+            send_response(client, %{"function"=> "register", "status"=> "success", "message"=> "Added new user", "users"=> set})
             #{:reply, {:ok, "success"}, Map.put(map, "registeredUsers", registeredUsers)}
         end
         {:noreply, set}
@@ -147,12 +149,13 @@ defmodule Server do
         #     {:noreply, map}
 
         # end
+        Logger.debug "sending tweets containing hashtag: #{hashtag} to user: #{username}"
         hashtags = get_hashtag_tweets(hashtag)
-        spawn fn -> send_hashtags(username, hashtags, client) end
+        spawn fn -> send_hashtags(hashtags, client) end
         {:noreply, map}
     end
 
-    def handle_cast({:mention, name, client}, map) do
+    def handle_cast({:mention, mention, username, client}, map) do
         # mentions = map["mentions"]
         # if Map.has_key? mentions, name do
         #     # TODO:- see how to send a list as bytes in elixir
@@ -162,8 +165,9 @@ defmodule Server do
         #     #{:reply, {:nomention, "None"}, map}
         #     {:noreply, map}
         # end
+        Logger.debug "sending tweets containing mention: #{mention} to user: #{username}"
         mentions = get_mention_tweets(mention)
-        spawn fn -> send_mentions(username, mentions, client) end
+        spawn fn -> send_mentions(mentions, client) end
         {:noreply, map}
     end
 
@@ -176,16 +180,19 @@ defmodule Server do
             #hashTagMap = loop(hashTagValues, List.last(hashTagValues), hashTagMap, tweet)
             #map = Map.put map, 'hashtags', hashTagMap
             for hashtag <- hashTagValues do
+                Logger.debug "adding hashtag :#{hashtag} to hashtag table for tweet: #{tweet}"
                 add_hashtag_tweet(hashtag, tweet)
             end
         end
 
         if Map.has_key? components, :mention do
-            mentionValues = Map.get(components, :mention)
+            mentionedUsers = Map.get(components, :mention)
             # mentionMap = loop(mentionValues, List.last(mentionValues), mentionMap, tweet)
             # map = Map.put map, 'mentions', mentionMap
-            for mention <- mentionValues do
-                add_mention_tweet(mention, tweet)
+            for user <- mentionedUsers do
+                Logger.debug "adding hashtag :#{user} to hashtag table for tweet: #{tweet}"
+                add_mention_tweet(user, tweet)
+                # TODO:- send the tweet to mentioned user and make sure we don't send same user same tweet twice
             end
         end
         # sender = get_user(username)
@@ -215,6 +222,7 @@ defmodule Server do
         # updated_user = Map.put(user, 'subscribers', updated_subscribers)
         # map = Map.put(map, follow, updated_user)
         for sub <- follow do
+            Logger.debug "subscribing user: #{username} to: #{sub}"
             add_user_subscibers(sub, username)
         end
         {:noreply, map}
@@ -232,7 +240,7 @@ defmodule Server do
     ##########################
 
     defp member_of_mentions(mention) do
-        :ets.member(:hashtags, hashtag)
+        :ets.member(:mentions, mention)
     end
 
     defp get_mention_tweets(mention) do
@@ -247,7 +255,7 @@ defmodule Server do
         mentions = :ets.lookup(:mentions, mention)
         if mentions != [] do
             updated_mentions = mentions |> List.first |> MapSet.put(tweet)
-            :ets.insert(:mentions, mention, updated_mentions)
+            :ets.insert(:mentions, {mention, updated_mentions})
         end
     end
 
@@ -273,13 +281,13 @@ defmodule Server do
         hashtags = :ets.lookup(:hashtags, hashtag)
         if hashtags != [] do
             updated_tags = hashtags |> List.first |> MapSet.put(tweet)
-            :ets.insert(:hashtags, hashtag, updated_tags)
+            :ets.insert(:hashtags, {hashtag, updated_tags})
         end
     end
 
     defp send_hashtags(hashtag, client) do
-        set = get_hashtag_tweets(hashtag) |> MapSet.to_list()
-        data = %{"function"=> "hashtag", "tweets" => set}
+        tweets = get_hashtag_tweets(hashtag) |> MapSet.to_list()
+        data = %{"function"=> "hashtag", "tweets" => tweets}
         send_response(client, data)
     end
 
@@ -304,6 +312,7 @@ defmodule Server do
         feed = get_user_feed(username) |> :queue.to_list
         data = %{"function"=> "feed", "feed" => feed}
         send_response(client, data)
+        empty_user_feed(username)
     end
 
     defp get_user(username) do
@@ -352,6 +361,7 @@ defmodule Server do
     defp add_user_subscibers(username, subscriber) do
         # assuming the user to be there in table
         subs = get_user_subscribers(username) |> MapSet.put(subscriber)
+        Logger.debug "user: #{username} updated subs: #{inspect(subs)}"
         update_user_field(username, 3, subs)
     end
 
