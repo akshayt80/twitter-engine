@@ -10,7 +10,9 @@ defmodule Client do
         # create clients and assign neigbors to them
         # TODO:- before first step we must register the user at server
         GenServer.start_link(__MODULE__, %{'tweets'=> [], 'subscribers'=> MapSet.new}, name: :myClient)
-        start_communication(socket, self())
+        #start_communication(socket, self())
+        # TODO:- remove hardcoded username
+        spawn fn -> listen(socket, "akshayt80") end
     end
     #TODO:- write a function which creates simulation for client
     defp start_communication(socket, parent) do
@@ -27,12 +29,12 @@ defmodule Client do
         {:ok, map}
     end
 
-    defp send_message(receiver, data) do
+    def send_message(receiver, data) do
         encoded_response = Poison.encode!(data)
-        :gen_tcp(receiver, encoded_response)
+        :gen_tcp.send(receiver, encoded_response)
     end
 
-    defp receive_message(receiver) do
+    def receive_message(receiver) do
         {:ok, data} = :gen_tcp.recv(receiver, 0)
         Poison.decode!(data)
     end
@@ -76,10 +78,10 @@ defmodule Client do
 
     ####################
 
-    defp listen(socket, username) do
+    def listen(socket, username) do
         {:ok, data} = :gen_tcp.recv(socket, 0)
         data = Poison.decode!(data)
-        Logger.debug "received data from worker #{inspect(worker)} data: #{inspect(data)}"
+        Logger.debug "received data at user #{username} data: #{inspect(data)}"
 
         # Send value of k as String
         #Logger.debug "sending initial message"
@@ -89,13 +91,14 @@ defmodule Client do
            "hashtag" -> GenServer.cast(:myClient, {:hashtag, Map.get(data, "hashtag"), socket})
            "mention" -> GenServer.cast(:myClient, {:mention, Map.get(data, "mention"), socket})
            "tweet" -> GenServer.cast(:myClient, {:tweet, username, Map.get(data, "sender"), Map.get(data, "tweet"), socket})
-           "subscribe" -> GenServer.cast(:myClient, {:subscribe, data["username"], data["follow"]})
-           "unsubscribe" -> GenServer.cast()
+           "subscribe" -> GenServer.cast(:myClient, {:subscribe, data["username"], data["users"]})
+           "unsubscribe" -> GenServer.cast(:myClient, {:unsubscribe, data["username"], data["users"]})
+           "feed" -> spawn fn -> process_feed(data["feed"]) end
         end
         listen(socket, username)
     end
 
-    defp perform_logout(server, username) do
+    def perform_logout(server, username) do
         # send logout message
         data = %{'function'=> 'logout', 'username'=> username}
         send_message(server, data)
@@ -110,35 +113,36 @@ defmodule Client do
         # TODO:- get the feed
     end
 
-    defp perform_registration(server, username \\ 'akshayt80') do
+    def perform_registration(server, username \\ "akshayt80") do
         # send register message to server
-        data = %{'function'=> 'register', 'username'=> username}
+        data = %{"function"=> "register", "username"=> username}
         data = blocking_send_message(server, data)
         if Map.get(data, "status") != "success" do
             Logger.debug "No success while registering"
-            perform_registration(server, generate_random_str())
-        end
-        # send login message to server
-        data = %{'function'=> 'login', 'username'=> username}
-        # expects servers response to proceed
-        response = blocking_send_message(server, data)
+            #perform_registration(server, generate_random_str())
+        else
+            # send login message to server
+            data = %{"function"=> "login", "username"=> username}
+            # expects servers response to proceed
+            send_message(server, data)
 
-        # send subscriber message to server
-        users = data["users"]
-        Logger.info "Current users: #{inspect(users)}"
-        # take user input for subscribing to some users or pick some random users to subscribe
-        input = IO.gets "Enter user to subscribe to space separated? "
-        #friends = input |> String.split([" ", "\n"], trim: true)
-        friend = String.trim(input, "\n")
-        data = %{'function'=> 'subscribe', 'username'=> username, 'follow'=> friend}
-        send_message(server, data)
+            # send subscriber message to server
+            users = data["users"]
+            Logger.info "Current users: #{inspect(users)}"
+            # take user input for subscribing to some users or pick some random users to subscribe
+            input = IO.gets "Enter user to subscribe to space separated? "
+            friends = input |> String.split([" ", "\n"], trim: true)
+            #friend = String.trim(input, "\n")
+            data = %{"function"=> "subscribe", "username"=> username, "users"=> friends}
+            send_message(server, data)
+        end
     end
 
     defp perform_first_login(server, users) do
         # randomly pick some user to subscribe to
     end
 
-    defp received_tweet(server, username, tweet) do
+    def received_tweet(server, username, tweet) do
         # print tweet
         Logger.info "username:#{username} incoming tweet:- #{tweet}"
         # with probability od 10% do retweet
@@ -149,7 +153,14 @@ defmodule Client do
         end
     end
 
-    defp query_server(server, key) do
+    def process_feed(feed) do
+        Logger.debug "Incoming feed"
+        for item <- feed do
+            Logger.info "Tweet: #{item}"
+        end
+    end
+
+    defp query_server(server, username, key) do
         # no need to do this in simulator
         # send message to server to get mentions
         data = %{'function'=> 'mention', 'name'=> username}
@@ -170,7 +181,7 @@ defmodule Client do
     defp generate_random_str(len \\ 9) do
         common_str = "abcdefghijklmnopqrstuvwxyz0123456789"
         list = common_str |> String.split("", trim: true) |> Enum.shuffle
-        random_str = 1..len |> Enum.reduce([], fn(_, acc) -> [Enum.random(l) | acc] end) |> Enum.join("")
+        random_str = 1..len |> Enum.reduce([], fn(_, acc) -> [Enum.random(list) | acc] end) |> Enum.join("")
         random_str
     end
 end
