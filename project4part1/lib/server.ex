@@ -53,7 +53,7 @@ defmodule Server do
            "mention" -> GenServer.cast(:myServer, {:mention, Map.get(data, "mention"), data["username"], worker})
            "tweet" -> GenServer.cast(:myServer, {:tweet, Map.get(data, "username"), Map.get(data, "tweet")})
            "subscribe" -> GenServer.cast(:myServer, {:subscribe, data["username"], data["users"]})
-           "unsubscribe" -> GenServer.cast(:myServer, {:ubsubscribe, data["username"], data["users"]})
+           "unsubscribe" -> GenServer.cast(:myServer, {:unsubscribe, data["username"], data["users"]})
         end
         serve(worker)
     end
@@ -115,7 +115,8 @@ defmodule Server do
         if member_of_users(username) do
             update_user_status(username, :online)
             if user_has_feeds(username) do
-              spawn fn -> send_feed(username, client) end
+                Logger.debug "#{username} has some tweets in feed"
+                spawn fn -> send_feed(username, client) end
             end
         end
         {:noreply, set}
@@ -150,8 +151,8 @@ defmodule Server do
 
         # end
         Logger.debug "sending tweets containing hashtag: #{hashtag} to user: #{username}"
-        hashtags = get_hashtag_tweets(hashtag)
-        spawn fn -> send_hashtags(hashtags, client) end
+        #hashtags = get_hashtag_tweets(hashtag)
+        spawn fn -> send_hashtags(hashtag, client) end
         {:noreply, map}
     end
 
@@ -166,31 +167,31 @@ defmodule Server do
         #     {:noreply, map}
         # end
         Logger.debug "sending tweets containing mention: #{mention} to user: #{username}"
-        mentions = get_mention_tweets(mention)
-        spawn fn -> send_mentions(mentions, client) end
+        #mentions = get_mention_tweets(mention)
+        spawn fn -> send_mentions(mention, client) end
         {:noreply, map}
     end
 
     def handle_cast({:tweet, username, tweet}, map) do
         # hashTagMap = Map.get map, 'hashtags'
         # mentionMap = Map.get map, 'mentions'
-        components = SocialParser.extract(tweet,[:hashtags,:mention])
+        components = SocialParser.extract(tweet,[:hashtags,:mentions])
         if Map.has_key? components, :hashtags do
             hashTagValues = Map.get(components, :hashtags)
             #hashTagMap = loop(hashTagValues, List.last(hashTagValues), hashTagMap, tweet)
             #map = Map.put map, 'hashtags', hashTagMap
             for hashtag <- hashTagValues do
-                Logger.debug "adding hashtag :#{hashtag} to hashtag table for tweet: #{tweet}"
+                Logger.debug "adding hashtag :#{hashtag} to hashtags table for tweet: #{tweet}"
                 add_hashtag_tweet(hashtag, tweet)
             end
         end
 
-        if Map.has_key? components, :mention do
-            mentionedUsers = Map.get(components, :mention)
+        if Map.has_key? components, :mentions do
+            mentionedUsers = Map.get(components, :mentions)
             # mentionMap = loop(mentionValues, List.last(mentionValues), mentionMap, tweet)
             # map = Map.put map, 'mentions', mentionMap
             for user <- mentionedUsers do
-                Logger.debug "adding hashtag :#{user} to hashtag table for tweet: #{tweet}"
+                Logger.debug "adding mention :#{user} to mentions table for tweet: #{tweet}"
                 add_mention_tweet(user, tweet)
                 # TODO:- send the tweet to mentioned user and make sure we don't send same user same tweet twice
             end
@@ -204,7 +205,7 @@ defmodule Server do
             status = get_user_status(subscriber)
             if status == :online do
                 Logger.debug "Sending to: #{subscriber} tweet: #{tweet}"
-                send_response(port, %{'function'=> 'tweet', 'sender'=> username, 'tweet'=> tweet})
+                send_response(port, %{"function"=> "tweet", "sender"=> username, "tweet"=> tweet})
             else
                 Logger.debug "Adding to user feed as #{subscriber} is not online"
                 add_user_feed(subscriber, tweet)
@@ -245,23 +246,27 @@ defmodule Server do
 
     defp get_mention_tweets(mention) do
         if member_of_mentions(mention) do
-            :ets.lookup(:mentions, mention) |> MapSet.to_list()
+            :ets.lookup(:mentions, mention) |> List.first |> elem(1) # |> MapSet.to_list()
         else
-            []
+            MapSet.new
         end
     end
 
     defp add_mention_tweet(mention, tweet) do
         mentions = :ets.lookup(:mentions, mention)
         if mentions != [] do
-            updated_mentions = mentions |> List.first |> MapSet.put(tweet)
+            updated_mentions = mentions |> List.first |> elem(1) |> MapSet.put(tweet)
             :ets.insert(:mentions, {mention, updated_mentions})
+        else
+            tweets = MapSet.new |> MapSet.put(tweet)
+            :ets.insert(:mentions, {mention, tweets})
         end
     end
 
     defp send_mentions(mention, client) do
-        set = get_mention_tweets(mention) |> MapSet.to_list()
-        data = %{"function"=> "mention", "tweets" => set}
+        tweets = get_mention_tweets(mention) |> MapSet.to_list()
+        Logger.debug "sending mentions: #{inspect(tweets)}"
+        data = %{"function"=> "mention", "tweets" => tweets}
         send_response(client, data)
     end
 
@@ -271,17 +276,20 @@ defmodule Server do
 
     defp get_hashtag_tweets(hashtag) do
         if member_of_hashtags(hashtag) do
-            :ets.lookup(:hashtags, hashtag) |> MapSet.to_list()
+            :ets.lookup(:hashtags, hashtag)|> List.first |> elem(1) #|> MapSet.to_list()
         else
-            []
+            MapSet.new
         end
     end
 
     defp add_hashtag_tweet(hashtag, tweet) do
         hashtags = :ets.lookup(:hashtags, hashtag)
         if hashtags != [] do
-            updated_tags = hashtags |> List.first |> MapSet.put(tweet)
-            :ets.insert(:hashtags, {hashtag, updated_tags})
+            updated_tweets = hashtags |> List.first |> elem(1) |> MapSet.put(tweet)
+            :ets.insert(:hashtags, {hashtag, updated_tweets})
+        else
+            tweets = MapSet.new |> MapSet.put(tweet)
+            :ets.insert(:hashtags, {hashtag, tweets})
         end
     end
 
@@ -302,9 +310,9 @@ defmodule Server do
     defp user_has_feeds(username) do
         feed = get_user_feed(username)
         if feed == [] do
-          true
-        else
           false
+        else
+          true
         end
     end
 
@@ -372,7 +380,9 @@ defmodule Server do
 
     defp add_user_feed(username, tweet) do
         feed = get_user_feed(username)
+        Logger.debug "#{username}'s feed: #{inspect(feed)}"
         feed = enqueue(feed, tweet)
+        Logger.debug "#{username}'s updated feed: #{inspect(feed)}"
         update_user_field(username, 4, feed) 
     end
 
@@ -381,10 +391,10 @@ defmodule Server do
     end
 
     defp enqueue(queue, value) do
-        if :queue.member value, queue do
+        if :queue.member(value, queue) do
             queue
         else
-            :queue.in value, queue
+            :queue.in(value, queue)
         end
     end
 
