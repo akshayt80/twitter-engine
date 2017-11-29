@@ -375,7 +375,7 @@ defmodule Server do
 
     defp send_feed(username, client) do
         feed = get_user_feed(username) |> :queue.to_list
-        data = %{"function"=> "feed", "feed" => feed}
+        data = %{"function"=> "feed", "feed" => feed, "username"=> username}
         send_response(client, data)
         #empty_user_feed(username)
     end
