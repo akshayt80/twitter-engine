@@ -222,18 +222,22 @@ defmodule Client do
             multiple_data = response |> String.split("}", trim: :true)
             for data <- multiple_data do
                 Logger.debug "data to be decoded: #{inspect(data)}"
-                data = Poison.decode!("#{data}}")
-                Logger.debug "received data at user #{username} data: #{inspect(data)}"
+                try do
+                    data = Poison.decode!("#{data}}")
+                    Logger.debug "received data at user #{username} data: #{inspect(data)}"
 
-                # Send value of k as String
-                #Logger.debug "sending initial message"
-                #:gen_tcp.send(worker, "Welcome to the Twitter")
-                #GenServer.cast(:myClient, {:initial, data, worker})
-                case data["function"] do
-                   "hashtag" -> GenServer.cast(:"#{username}", {:hashtag, data["tweets"]})
-                   "mention" -> GenServer.cast(:"#{username}", {:mention, data["tweets"]})
-                   "tweet" -> GenServer.cast(:"#{username}", {:tweet, username, data["sender"], data["tweet"], socket})
-                   "feed" -> GenServer.cast(:"#{username}", {:feed, data["feed"]})
+                    # Send value of k as String
+                    #Logger.debug "sending initial message"
+                    #:gen_tcp.send(worker, "Welcome to the Twitter")
+                    #GenServer.cast(:myClient, {:initial, data, worker})
+                    case data["function"] do
+                       "hashtag" -> GenServer.cast(:"#{username}", {:hashtag, data["tweets"]})
+                       "mention" -> GenServer.cast(:"#{username}", {:mention, data["tweets"]})
+                       "tweet" -> GenServer.cast(:"#{username}", {:tweet, username, data["sender"], data["tweet"], socket})
+                       "feed" -> GenServer.cast(:"#{username}", {:feed, data["feed"]})
+                    end
+                rescue
+                    Poison.SyntaxError -> Logger.error "Got poison error for data: #{data}"
                 end
             end
         end
@@ -246,7 +250,7 @@ defmodule Client do
         send_message(server, data)
         # sleep for some random time between 1 to 10 sec
         if autologin do
-            sec = :rand.uniform(10) * 1000
+            sec = :rand.uniform(5000)
             Logger.debug "#{username} sleeping for #{sec} seconds"
             :timer.sleep sec
             # send login back to server
