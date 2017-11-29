@@ -128,7 +128,7 @@ defmodule Server do
             #                     }
             #                 )
             # map = Map.put(map, "registeredUsers", updatedRegisteredUsers)
-            send_response(client, %{"function"=> "register", "status"=> "success", "message"=> "Added new user", "users"=> set})
+            #send_response(client, %{"function"=> "register", "status"=> "success", "message"=> "Added new user", "users"=> set})
             update_counter("total_users")
             update_counter("online_users")
             #{:reply, {:ok, "success"}, Map.put(map, "registeredUsers", registeredUsers)}
