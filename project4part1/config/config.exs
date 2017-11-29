@@ -22,7 +22,7 @@ use Mix.Config
 #
 config :logger,
     backends: [:console],
-    compile_time_purge_level: :debug
+    compile_time_purge_level: :info
 
 # It is also possible to import configuration files, relative to this
 # directory. For example, you can emulate configuration per environment
