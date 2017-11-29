@@ -44,17 +44,20 @@ defmodule Client do
             #username = "user_#{number}"
             Logger.debug "username given #{username} with frequency:#{frequency}"
         end
+
+        GenServer.start_link(__MODULE__, %{"mode"=> mode, "retweet_prob"=> 10}, name: :"#{username}")
+        spawn fn -> listen(socket, username) end
+
         perform_registration(socket, username)
 
+
         if mode == :simulate do
-            #:timer.sleep 1000
+            :timer.sleep 1000
             # subscribe to users
             Logger.debug "performing bulk_subscription for user: #{username} followers: #{inspect(users)}"
             bulk_subscription(socket, users, username)
         end
 
-        GenServer.start_link(__MODULE__, %{"mode"=> mode, "retweet_prob"=> 10}, name: :"#{username}")
-        spawn fn -> listen(socket, username) end
         if mode == :interactive do
             interactive_client(socket, username)
         else
@@ -164,9 +167,25 @@ defmodule Client do
         %{"function" => action, "data"=> data}
     end
 
-    def handle_cast({:register, username, server}, map) do
-        data = %{"username"=> username}
-        send_message(server, create_message_map(:register, data))
+    def handle_cast({:register, data}, map) do
+        #data = %{"username"=> username}
+        if data["status"] != "success" do
+            Logger.debug "No success while registering"
+            #perform_registration(server, generate_random_str())
+        else
+            # send login message to server
+           # send_message(server, %{"function"=> "login", "username"=> username})
+
+            # send subscriber message to server
+            users = data["users"]
+            Logger.info "Current users at server: #{inspect(users)}"
+            # take user input for subscribing to some users or pick some random users to subscribe
+            #input = IO.gets "Enter user to subscribe to space separated? "
+            #friends = input |> String.split([" ", "\n"], trim: true)
+            #friend = String.trim(input, "\n")
+            #data = %{"function"=> "subscribe", "username"=> username, "users"=> friends}
+            #send_message(server, data)
+        end
         {:noreply, map}
     end
 
@@ -222,18 +241,23 @@ defmodule Client do
             multiple_data = response |> String.split("}", trim: :true)
             for data <- multiple_data do
                 Logger.debug "data to be decoded: #{inspect(data)}"
-                data = Poison.decode!("#{data}}")
-                Logger.debug "received data at user #{username} data: #{inspect(data)}"
+                try do
+                    data = Poison.decode!("#{data}}")
+                    Logger.debug "received data at user #{username} data: #{inspect(data)}"
 
-                # Send value of k as String
-                #Logger.debug "sending initial message"
-                #:gen_tcp.send(worker, "Welcome to the Twitter")
-                #GenServer.cast(:myClient, {:initial, data, worker})
-                case data["function"] do
-                   "hashtag" -> GenServer.cast(:"#{username}", {:hashtag, data["tweets"]})
-                   "mention" -> GenServer.cast(:"#{username}", {:mention, data["tweets"]})
-                   "tweet" -> GenServer.cast(:"#{username}", {:tweet, username, data["sender"], data["tweet"], socket})
-                   "feed" -> GenServer.cast(:"#{username}", {:feed, data["feed"]})
+                    # Send value of k as String
+                    #Logger.debug "sending initial message"
+                    #:gen_tcp.send(worker, "Welcome to the Twitter")
+                    #GenServer.cast(:myClient, {:initial, data, worker})
+                    case data["function"] do
+                        "register" -> GenServer.cast(:"#{username}", {:register, data})
+                        "hashtag" -> GenServer.cast(:"#{username}", {:hashtag, data["tweets"]})
+                        "mention" -> GenServer.cast(:"#{username}", {:mention, data["tweets"]})
+                        "tweet" -> GenServer.cast(:"#{username}", {:tweet, username, data["sender"], data["tweet"], socket})
+                        "feed" -> GenServer.cast(:"#{username}", {:feed, data["feed"]})
+                    end
+                rescue
+                    Poison.SyntaxError -> Logger.error "Got poison error for data: #{data}"
                 end
             end
         end
@@ -246,7 +270,7 @@ defmodule Client do
         send_message(server, data)
         # sleep for some random time between 1 to 10 sec
         if autologin do
-            sec = :rand.uniform(10) * 1000
+            sec = :rand.uniform(5000)
             Logger.debug "#{username} sleeping for #{sec} seconds"
             :timer.sleep sec
             # send login back to server
@@ -267,24 +291,25 @@ defmodule Client do
     def perform_registration(server, username \\ "akshayt80") do
         # send register message to server
         data = %{"function"=> "register", "username"=> username}
-        data = blocking_send_message(server, data)
-        if data["status"] != "success" do
-            Logger.debug "No success while registering"
-            #perform_registration(server, generate_random_str())
-        else
-            # send login message to server
-           # send_message(server, %{"function"=> "login", "username"=> username})
+        send_message(server, data)
+        # data = blocking_send_message(server, data)
+        # if data["status"] != "success" do
+        #     Logger.debug "No success while registering"
+        #     #perform_registration(server, generate_random_str())
+        # else
+        #     # send login message to server
+        #    # send_message(server, %{"function"=> "login", "username"=> username})
 
-            # send subscriber message to server
-            users = data["users"]
-            Logger.info "Current users at server: #{inspect(users)}"
-            # take user input for subscribing to some users or pick some random users to subscribe
-            #input = IO.gets "Enter user to subscribe to space separated? "
-            #friends = input |> String.split([" ", "\n"], trim: true)
-            #friend = String.trim(input, "\n")
-            #data = %{"function"=> "subscribe", "username"=> username, "users"=> friends}
-            #send_message(server, data)
-        end
+        #     # send subscriber message to server
+        #     users = data["users"]
+        #     Logger.info "Current users at server: #{inspect(users)}"
+        #     # take user input for subscribing to some users or pick some random users to subscribe
+        #     #input = IO.gets "Enter user to subscribe to space separated? "
+        #     #friends = input |> String.split([" ", "\n"], trim: true)
+        #     #friend = String.trim(input, "\n")
+        #     #data = %{"function"=> "subscribe", "username"=> username, "users"=> friends}
+        #     #send_message(server, data)
+        # end
     end
 
     # defp perform_first_login(server, users) do
@@ -343,8 +368,12 @@ defmodule Client do
     end
 
     defp bulk_subscription(socket, users, username) do
-        data = %{"function"=> "bulk_subscription", "users"=> users, "username"=> username}
-        send_message(socket, data)
+        user_lists = users |> Enum.chunk_every(100)
+        for user_list <- user_lists do
+            data = %{"function"=> "bulk_subscription", "users"=> users, "username"=> username}
+            send_message(socket, data)
+            :timer.sleep 50
+        end
     end
 
     defp unsubscribe(socket, users, username) do

@@ -63,6 +63,7 @@ defmodule Server do
         {status, response} = :gen_tcp.recv(worker, 0)
         if status == :ok do
             # this will handle the case when there are more than one
+            Logger.debug "Socket data: #{inspect(response)}"
             multiple_data = response |> String.split("}", trim: :true)
             for data <- multiple_data do
                 Logger.debug "data to be decoded: #{inspect(data)}"
@@ -127,7 +128,7 @@ defmodule Server do
             #                     }
             #                 )
             # map = Map.put(map, "registeredUsers", updatedRegisteredUsers)
-            send_response(client, %{"function"=> "register", "status"=> "success", "message"=> "Added new user", "users"=> set})
+            #send_response(client, %{"function"=> "register", "status"=> "success", "message"=> "Added new user", "users"=> set})
             update_counter("total_users")
             update_counter("online_users")
             #{:reply, {:ok, "success"}, Map.put(map, "registeredUsers", registeredUsers)}
@@ -154,8 +155,8 @@ defmodule Server do
             update_user_status(username, :online)
             if user_has_feeds(username) do
                 Logger.debug "#{username} has some tweets in feed"
-                send_feed(username, client)
-                empty_user_feed(username)
+                spawn fn ->  send_feed(username, client) end
+                #empty_user_feed(username)
             end
             update_counter("online_users")
         end
@@ -260,11 +261,11 @@ defmodule Server do
             if status == :online do
                 Logger.debug "Sending to: #{subscriber} tweet: #{tweet}"
                 send_response(port, %{"function"=> "tweet", "sender"=> username, "tweet"=> tweet})
-                update_counter("tweets")
             else
                 Logger.debug "Adding to user feed as #{subscriber} is not online"
                 add_user_feed(subscriber, tweet)
             end
+            update_counter("tweets")
         end
 
         {:noreply, map}
@@ -386,10 +387,13 @@ defmodule Server do
     end
 
     defp send_feed(username, client) do
-        feed = get_user_feed(username) |> :queue.to_list
-        data = %{"function"=> "feed", "feed" => feed, "username"=> username}
-        send_response(client, data)
-        #empty_user_feed(username)
+        feeds = get_user_feed(username) |> :queue.to_list |> Enum.chunk_every(5)
+        for feed <- feeds do
+            data = %{"function"=> "feed", "feed" => feed, "username"=> username}
+            send_response(client, data)
+            :timer.sleep 50
+        end
+        empty_user_feed(username)
     end
 
     defp get_user(username) do
@@ -455,10 +459,12 @@ defmodule Server do
 
     defp add_user_feed(username, tweet) do
         feed = get_user_feed(username)
-        Logger.debug "#{username}'s feed: #{inspect(feed)}"
-        feed = enqueue(feed, tweet)
-        Logger.debug "#{username}'s updated feed: #{inspect(feed)}"
-        update_user_field(username, 4, feed) 
+        if feed do
+            Logger.debug "#{username}'s feed: #{inspect(feed)}"
+            feed = enqueue(feed, tweet)
+            Logger.debug "#{username}'s updated feed: #{inspect(feed)}"
+            update_user_field(username, 4, feed)
+        end
     end
 
     defp empty_user_feed(username) do
