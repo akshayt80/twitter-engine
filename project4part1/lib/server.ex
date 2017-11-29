@@ -232,9 +232,21 @@ defmodule Server do
             mentionedUsers = Map.get(components, :mentions)
             # mentionMap = loop(mentionValues, List.last(mentionValues), mentionMap, tweet)
             # map = Map.put map, 'mentions', mentionMap
+            
             for user <- mentionedUsers do
                 Logger.debug "adding mention :#{user} to mentions table for tweet: #{tweet}"
                 add_mention_tweet(user, tweet)
+                value = String.split(user, ["@", "+"], trim: true) |> List.first
+                port = get_user_port(value)
+                status = get_user_status(value)
+                update_counter("tweets")
+                if status == :online do
+                    Logger.debug "Sending to: #{value} tweet: #{tweet}"
+                    send_response(port, %{"function"=> "tweet", "sender"=> username, "tweet"=> tweet})
+                else
+                    Logger.debug "Adding to user feed as #{value} is not online"
+                    add_user_feed(value, tweet)
+                end
                 # TODO:- send the tweet to mentioned user and make sure we don't send same user same tweet twice
             end
         end
