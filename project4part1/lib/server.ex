@@ -20,9 +20,32 @@ defmodule Server do
         Logger.debug "creating users table"
         # {username, status, subscribers, feed, port}
         :ets.new(:users, [:set, :public, :named_table, read_concurrency: true])
+        Logger.debug "creating counter record"
+        :ets.new(:counter, [:set, :public, :named_table, read_concurrency: true])
+        initialize_counters()
+        #:ets.insert(:counter, {"tweets", 0})
         # using this to store map of user and port
         GenServer.start_link(__MODULE__, MapSet.new, name: :myServer)
+        spawn fn -> stats_print() end
         loop_acceptor(listen_socket)
+    end
+
+    defp initialize_counters() do
+        :ets.insert(:counter, {"tweets", 0})
+        :ets.insert(:counter, {"total_users", 0})
+        :ets.insert(:counter, {"online_users", 0})
+        :ets.insert(:counter, {"offline_users", 0})
+    end
+
+    defp stats_print(period \\ 10000, last_tweet_count \\ 0) do
+        :timer.sleep period
+        current_tweet_count = :ets.lookup_element(:counter, "tweets", 2)
+        tweet_per_sec = (current_tweet_count - last_tweet_count) / (10000 / 1000)
+        total_users = :ets.lookup_element(:counter, "total_users", 2)
+        online_users = :ets.lookup_element(:counter, "online_users", 2)
+        offline_users = :ets.lookup_element(:counter, "offline_users", 2)
+        Logger.info "Server Stats\nTweets(per sec): #{tweet_per_sec}\nTotal Users: #{total_users}\nOnline Users: #{online_users}\nOffline Users: #{offline_users}"
+        stats_print(period, current_tweet_count)
     end
 
     defp loop_acceptor(socket) do
@@ -37,28 +60,37 @@ defmodule Server do
 
     defp serve(worker) do
         # TODO:- handle errors {:error, :closed}
-        {:ok, data} = :gen_tcp.recv(worker, 0)
-        data = Poison.decode!(data)
-        Logger.debug "received data from worker #{inspect(worker)} data: #{inspect(data)}"
+        {status, response} = :gen_tcp.recv(worker, 0)
+        if status == :ok do
+            # this will handle the case when there are more than one
+            multiple_data = response |> String.split("}", trim: :true)
+            for data <- multiple_data do
+                Logger.debug "data to be decoded: #{inspect(data)}"
+                data = Poison.decode!("#{data}}")
+                Logger.debug "received data from worker #{inspect(worker)} data: #{inspect(data)}"
 
-        # Send value of k as String
-        #Logger.debug "sending initial message"
-        #:gen_tcp.send(worker, "Welcome to the Twitter")
-        #GenServer.cast(:myServer, {:initial, data, worker})
-        case Map.get(data, "function") do
-           "register" -> GenServer.cast(:myServer, {:register, Map.get(data, "username"), worker})
-           "login" -> GenServer.cast(:myServer, {:login, Map.get(data, "username"), worker})
-           "logout" -> GenServer.cast(:myServer, {:logout, Map.get(data, "username")})
-           "hashtag" -> GenServer.cast(:myServer, {:hashtag, Map.get(data, "hashtag"), data["username"], worker})
-           "mention" -> GenServer.cast(:myServer, {:mention, Map.get(data, "mention"), data["username"], worker})
-           "tweet" -> GenServer.cast(:myServer, {:tweet, Map.get(data, "username"), Map.get(data, "tweet")})
-           "subscribe" -> GenServer.cast(:myServer, {:subscribe, data["username"], data["users"]})
-           "unsubscribe" -> GenServer.cast(:myServer, {:unsubscribe, data["username"], data["users"]})
+                # Send value of k as String
+                #Logger.debug "sending initial message"
+                #:gen_tcp.send(worker, "Welcome to the Twitter")
+                #GenServer.cast(:myServer, {:initial, data, worker})
+                case Map.get(data, "function") do
+                   "register" -> GenServer.cast(:myServer, {:register, Map.get(data, "username"), worker})
+                   "login" -> GenServer.cast(:myServer, {:login, Map.get(data, "username"), worker})
+                   "logout" -> GenServer.cast(:myServer, {:logout, Map.get(data, "username")})
+                   "hashtag" -> GenServer.cast(:myServer, {:hashtag, Map.get(data, "hashtag"), data["username"], worker})
+                   "mention" -> GenServer.cast(:myServer, {:mention, Map.get(data, "mention"), data["username"], worker})
+                   "tweet" -> GenServer.cast(:myServer, {:tweet, Map.get(data, "username"), Map.get(data, "tweet")})
+                   "subscribe" -> GenServer.cast(:myServer, {:subscribe, data["username"], data["users"]})
+                   "unsubscribe" -> GenServer.cast(:myServer, {:unsubscribe, data["username"], data["users"]})
+                   "bulk_subscription" -> GenServer.cast(:myServer, {:bulk_subscription, data["username"], data["users"]})
+                end
+            end
         end
         serve(worker)
     end
 
     defp send_response(client, data) do
+        # TODO:- Decide whether we want to update counter for feed as well
         encoded_response = Poison.encode!(data)
         :gen_tcp.send(client, encoded_response)
     end
@@ -96,6 +128,8 @@ defmodule Server do
             #                 )
             # map = Map.put(map, "registeredUsers", updatedRegisteredUsers)
             send_response(client, %{"function"=> "register", "status"=> "success", "message"=> "Added new user", "users"=> set})
+            update_counter("total_users")
+            update_counter("online_users")
             #{:reply, {:ok, "success"}, Map.put(map, "registeredUsers", registeredUsers)}
         end
         {:noreply, set}
@@ -113,11 +147,17 @@ defmodule Server do
         # map = Map.merge(map, temp_dict) 
         #{:reply, {:ok, "success"}, map}
         if member_of_users(username) do
+            offline_users = :ets.lookup_element(:counter, "offline_users", 2)
+            if offline_users > 0 do
+                decrease_counter("offline_users")
+            end
             update_user_status(username, :online)
             if user_has_feeds(username) do
                 Logger.debug "#{username} has some tweets in feed"
-                spawn fn -> send_feed(username, client) end
+                send_feed(username, client)
+                empty_user_feed(username)
             end
+            update_counter("online_users")
         end
         {:noreply, set}
     end
@@ -134,6 +174,8 @@ defmodule Server do
         #{:reply, {:ok, "success"}, map}
         if member_of_users(username) do
             update_user_status(username, :offline)
+            update_counter("offline_users")
+            decrease_counter("online_users")
         end
         {:noreply, set}
     end
@@ -206,6 +248,7 @@ defmodule Server do
             if status == :online do
                 Logger.debug "Sending to: #{subscriber} tweet: #{tweet}"
                 send_response(port, %{"function"=> "tweet", "sender"=> username, "tweet"=> tweet})
+                update_counter("tweets")
             else
                 Logger.debug "Adding to user feed as #{subscriber} is not online"
                 add_user_feed(subscriber, tweet)
@@ -229,6 +272,12 @@ defmodule Server do
         {:noreply, map}
     end
 
+    def handle_cast({:bulk_subscription, username, follwers}, map) do
+        Logger.debug "adding bulk followers for user: #{username}"
+        add_bulk_user_subscribers(username, follwers)
+        {:noreply, map}
+    end
+
     def handle_cast({:unsubscribe, username, unsubscribe}, map) do
         for unsub <- unsubscribe do
             remove_user_subscriber(unsub, username)
@@ -239,6 +288,14 @@ defmodule Server do
     ##########################
     # Server Utility functions
     ##########################
+
+    defp update_counter(field) do
+        :ets.update_counter(:counter, field, 1)
+    end
+
+    defp decrease_counter(field) do
+        :ets.update_counter(:counter, field, -1)
+    end
 
     defp member_of_mentions(mention) do
         :ets.member(:mentions, mention)
@@ -309,7 +366,7 @@ defmodule Server do
 
     defp user_has_feeds(username) do
         feed = get_user_feed(username)
-        if feed == [] do
+        if feed == :queue.new do
           false
         else
           true
@@ -320,7 +377,7 @@ defmodule Server do
         feed = get_user_feed(username) |> :queue.to_list
         data = %{"function"=> "feed", "feed" => feed}
         send_response(client, data)
-        empty_user_feed(username)
+        #empty_user_feed(username)
     end
 
     defp get_user(username) do
@@ -370,6 +427,12 @@ defmodule Server do
         # assuming the user to be there in table
         subs = get_user_subscribers(username) |> MapSet.put(subscriber)
         Logger.debug "user: #{username} updated subs: #{inspect(subs)}"
+        update_user_field(username, 3, subs)
+    end
+
+    defp add_bulk_user_subscribers(username, follwers) do
+        existing_subs = get_user_subscribers(username)
+        subs = MapSet.union(existing_subs, MapSet.new(follwers))
         update_user_field(username, 3, subs)
     end
 
