@@ -14,15 +14,22 @@ defmodule Project4part1 do
   """
   require Logger
   def main(args) do
-    {_, [str], _} = OptionParser.parse(args)
-    server_ip = parse_ip("127.0.0.1")
+    {_, args, _} = OptionParser.parse(args)
     port = 6666
-    if str == "server" do
+    if Enum.at(args, 0) == "server" do
       Logger.debug "Starting as Server"
       Server.start_link(port)
     else
-      Logger.debug "Starting as Client"
-      Client.start_link(server_ip, port)
+
+      server_ip = parse_ip(Enum.at(args, 1))
+      mode = Enum.at(args, 2)
+      if mode == "i" do
+        Logger.debug "Starting as Interactive Client"
+        Client.start_link(server_ip, port)
+      else
+        user_count = Enum.at(args, 3) |> String.to_integer
+        Client.simulate(server_ip, port, user_count)
+      end
     end
   end
   defp parse_ip(str) do
