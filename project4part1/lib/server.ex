@@ -218,6 +218,7 @@ defmodule Server do
     def handle_cast({:tweet, username, tweet}, map) do
         # hashTagMap = Map.get map, 'hashtags'
         # mentionMap = Map.get map, 'mentions'
+        mentionedUsers = None
         components = SocialParser.extract(tweet,[:hashtags,:mentions])
         if Map.has_key? components, :hashtags do
             hashTagValues = Map.get(components, :hashtags)
@@ -240,15 +241,16 @@ defmodule Server do
                 value = String.split(user, ["@", "+"], trim: true) |> List.first
                 port = get_user_port(value)
                 status = get_user_status(value)
-                update_counter("tweets")
-                if status == :online do
-                    Logger.debug "Sending to: #{value} tweet: #{tweet}"
-                    send_response(port, %{"function"=> "tweet", "sender"=> username, "tweet"=> tweet})
-                else
-                    Logger.debug "Adding to user feed as #{value} is not online"
-                    add_user_feed(value, tweet)
+                if value != username do
+                    update_counter("tweets")
+                    if status == :online do
+                        Logger.debug "Sending to: #{value} tweet: #{tweet}"
+                        send_response(port, %{"function"=> "tweet", "sender"=> username, "tweet"=> tweet})
+                    else
+                        Logger.debug "Adding to user feed as #{value} is not online"
+                        add_user_feed(value, tweet)
+                    end
                 end
-                # TODO:- send the tweet to mentioned user and make sure we don't send same user same tweet twice
             end
         end
         # sender = get_user(username)
@@ -256,16 +258,21 @@ defmodule Server do
         for subscriber <- subscribers do
             # user_info = map[subscriber]
             #port = user_info['port']
-            port = get_user_port(subscriber)
-            status = get_user_status(subscriber)
-            if status == :online do
-                Logger.debug "Sending to: #{subscriber} tweet: #{tweet}"
-                send_response(port, %{"function"=> "tweet", "sender"=> username, "tweet"=> tweet})
+            Logger.debug "mentioned_users: #{inspect(mentionedUsers)}"
+            if mentionedUsers != None and Enum.member?(mentionedUsers, subscriber) do
+                Logger.debug "Not sending the message again"
             else
-                Logger.debug "Adding to user feed as #{subscriber} is not online"
-                add_user_feed(subscriber, tweet)
+                port = get_user_port(subscriber)
+                status = get_user_status(subscriber)
+                if status == :online do
+                    Logger.debug "Sending to: #{subscriber} tweet: #{tweet}"
+                    send_response(port, %{"function"=> "tweet", "sender"=> username, "tweet"=> tweet})
+                else
+                    Logger.debug "Adding to user feed as #{subscriber} is not online"
+                    add_user_feed(subscriber, tweet)
+                end
+                update_counter("tweets")
             end
-            update_counter("tweets")
         end
 
         {:noreply, map}
