@@ -6,7 +6,8 @@ defmodule Client do
         constant = zipf_constant(user_count)
         Logger.debug "zipf constant: #{constant}"
         # Top 10%  and bootom 10% of total
-        high = low = round(:math.ceil(user_count * 0.1))
+        high = round(:math.ceil(user_count * 0.1))
+        low = user_count - high
         for n <- 1..user_count do
             username = "user_#{n}"
             available_subscribers = MapSet.difference(user_set, MapSet.new([username]))
@@ -17,7 +18,7 @@ defmodule Client do
             if n <= high do
                 frequency = :high
             end
-            if n >= low do
+            if n > low do
               frequency = :low
             end
             spawn fn -> start_link(server_ip, port, :simulate, username, subscribers, frequency) end
