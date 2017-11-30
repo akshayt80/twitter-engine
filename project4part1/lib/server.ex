@@ -22,8 +22,6 @@ defmodule Server do
         :ets.new(:users, [:set, :public, :named_table, read_concurrency: true])
         Logger.debug "creating counter record"
         :ets.new(:counter, [:set, :public, :named_table, read_concurrency: true])
-
-        :ets.new(:incomplete_packet, [:set, :public, :named_table, read_concurrency: true])
         initialize_counters()
         #:ets.insert(:counter, {"tweets", 0})
         # using this to store map of user and port
@@ -59,14 +57,14 @@ defmodule Server do
     defp loop_acceptor(socket) do
         Logger.debug "Ready to accept new connections"
         {:ok, worker} = :gen_tcp.accept(socket)
-        
+        incomplete_packet = :ets.new(:incomplete_packet, [:set, :public, read_concurrency: true])
         # Spawn receive message in separate process
-        spawn fn -> serve(worker) end
+        spawn fn -> serve(worker, incomplete_packet) end
         # Loop to accept new connection
         loop_acceptor(socket)
     end
 
-    defp serve(worker) do
+    defp serve(worker, incomplete_packet) do
         # TODO:- handle errors {:error, :closed}
         {status, response} = :gen_tcp.recv(worker, 0)
         if status == :ok do
@@ -75,9 +73,9 @@ defmodule Server do
             multiple_data = response |> String.split("}", trim: :true)
             for data <- multiple_data do
                 Logger.debug "data to be decoded: #{inspect(data)}"
-                incomplete_packet = get_incomplete_packet()
-                if incomplete_packet != false do
-                    data = "#{incomplete_packet}#{data}"
+                incomplete_packet_data = get_incomplete_packet(incomplete_packet)
+                if incomplete_packet_data != false do
+                    data = "#{incomplete_packet_data}#{data}"
                     Logger.debug "Found incomplete_packet and modified to: #{data}"
                 end
                 try do
@@ -100,12 +98,12 @@ defmodule Server do
                        "bulk_subscription" -> GenServer.cast(:myServer, {:bulk_subscription, data["username"], data["users"]})
                     end
                 rescue
-                    Poison.SyntaxError -> Logger.error "Got poison error for data: #{data}"
-                    insert_incomplete_packet(data)
+                    Poison.SyntaxError -> Logger.debug "Got poison error for data: #{data}"
+                    insert_incomplete_packet(data, incomplete_packet)
                 end
             end
         end
-        serve(worker)
+        serve(worker, incomplete_packet)
     end
 
     defp send_response(client, data) do
@@ -334,15 +332,15 @@ defmodule Server do
     # Server Utility functions
     ##########################
 
-    defp insert_incomplete_packet(data)do
-       :ets.insert(:incomplete_packet, {"incomplete_packet", data}) 
+    defp insert_incomplete_packet(data, table)do
+       :ets.insert(table, {"incomplete_packet", data})
     end
 
-    defp get_incomplete_packet() do
+    defp get_incomplete_packet(table) do
         packet = false
-        if :ets.member(:incomplete_packet, "incomplete_packet") do
-            packet = :ets.lookup_element(:incomplete_packet, "incomplete_packet", 2)
-            :ets.delete(:incomplete_packet, "incomplete_packet")
+        if :ets.member(table, "incomplete_packet") do
+            packet = :ets.lookup_element(table, "incomplete_packet", 2)
+            :ets.delete(table, "incomplete_packet")
         end
         packet
     end
