@@ -67,24 +67,27 @@ defmodule Server do
             multiple_data = response |> String.split("}", trim: :true)
             for data <- multiple_data do
                 Logger.debug "data to be decoded: #{inspect(data)}"
-                data = Poison.decode!("#{data}}")
-                Logger.debug "received data from worker #{inspect(worker)} data: #{inspect(data)}"
+                try do
+                    data = Poison.decode!("#{data}}")
+                    Logger.debug "received data from worker #{inspect(worker)} data: #{inspect(data)}"
 
-                # Send value of k as String
-                #Logger.debug "sending initial message"
-                #:gen_tcp.send(worker, "Welcome to the Twitter")
-                #GenServer.cast(:myServer, {:initial, data, worker})
-                case Map.get(data, "function") do
-                   "register" -> GenServer.cast(:myServer, {:register, Map.get(data, "username"), worker})
-                   "login" -> GenServer.cast(:myServer, {:login, Map.get(data, "username"), worker})
-                   "logout" -> GenServer.cast(:myServer, {:logout, Map.get(data, "username")})
-                   "hashtag" -> GenServer.cast(:myServer, {:hashtag, Map.get(data, "hashtag"), data["username"], worker})
-                   "mention" -> GenServer.cast(:myServer, {:mention, Map.get(data, "mention"), data["username"], worker})
-                   "tweet" -> GenServer.cast(:myServer, {:tweet, Map.get(data, "username"), Map.get(data, "tweet")})
-                   "subscribe" -> GenServer.cast(:myServer, {:subscribe, data["username"], data["users"]})
-                   "unsubscribe" -> GenServer.cast(:myServer, {:unsubscribe, data["username"], data["users"]})
-                   "bulk_subscription" -> GenServer.cast(:myServer, {:bulk_subscription, data["username"], data["users"]})
-                end
+                    # Send value of k as String
+                    #Logger.debug "sending initial message"
+                    #:gen_tcp.send(worker, "Welcome to the Twitter")
+                    #GenServer.cast(:myServer, {:initial, data, worker})
+                    case Map.get(data, "function") do
+                       "register" -> GenServer.cast(:myServer, {:register, Map.get(data, "username"), worker})
+                       "login" -> GenServer.cast(:myServer, {:login, Map.get(data, "username"), worker})
+                       "logout" -> GenServer.cast(:myServer, {:logout, Map.get(data, "username")})
+                       "hashtag" -> GenServer.cast(:myServer, {:hashtag, Map.get(data, "hashtag"), data["username"], worker})
+                       "mention" -> GenServer.cast(:myServer, {:mention, Map.get(data, "mention"), data["username"], worker})
+                       "tweet" -> GenServer.cast(:myServer, {:tweet, Map.get(data, "username"), Map.get(data, "tweet")})
+                       "subscribe" -> GenServer.cast(:myServer, {:subscribe, data["username"], data["users"]})
+                       "unsubscribe" -> GenServer.cast(:myServer, {:unsubscribe, data["username"], data["users"]})
+                       "bulk_subscription" -> GenServer.cast(:myServer, {:bulk_subscription, data["username"], data["users"]})
+                    end
+                rescue
+                    Poison.SyntaxError -> Logger.error "Got poison error for data: #{data}"
             end
         end
         serve(worker)
