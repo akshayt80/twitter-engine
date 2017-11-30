@@ -55,7 +55,7 @@ defmodule Client do
             # subscribe to users
             Logger.debug "performing bulk_subscription for user: #{username} followers: #{inspect(users)}"
             bulk_subscription(socket, users, username)
-            timer.sleep 1000
+            :timer.sleep 1000
         end
 
         if mode == :interactive do
