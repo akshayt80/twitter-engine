@@ -88,6 +88,7 @@ defmodule Server do
                     end
                 rescue
                     Poison.SyntaxError -> Logger.error "Got poison error for data: #{data}"
+                end
             end
         end
         serve(worker)
