@@ -1,7 +1,7 @@
 defmodule Client do
     use GenServer
     require Logger
-    def simulate(server_ip, port, user_count \\ 3) do
+    def simulate(socket, user_count \\ 3) do
         user_set = 1..user_count |> Enum.reduce(MapSet.new, fn(x, acc) -> MapSet.put(acc, "user_#{x}") end)
         constant = zipf_constant(user_count)
         Logger.debug "zipf constant: #{constant}"
@@ -21,7 +21,7 @@ defmodule Client do
             if n > low do
               frequency = :low
             end
-            spawn fn -> start_link(server_ip, port, :simulate, username, subscribers, frequency) end
+            spawn fn -> start_link(socket, :simulate, username, subscribers, frequency) end
         end
         keep_alive()
     end
@@ -32,11 +32,7 @@ defmodule Client do
     # number represents number of user which is used in username in simulation mmode
     # users is list of all available users
     # frequency if :high then every 200 ms one tweet will be sent, :medium every 700ms and :slow every 1200ms
-    def start_link(server_ip, port, mode \\ :interactive, username \\ None, users \\ None, frequency \\ :medium) do
-        # Connect to server
-        Logger.debug "Establishing Server connection"
-        {:ok, socket} = :gen_tcp.connect(server_ip, port, [:binary, {:active, false},{:packet, 0}])
-        Logger.debug "Server Connection Established"
+    def start_link(socket, mode \\ :interactive, username \\ None, users \\ None, frequency \\ :medium) do
         if mode == :interactive do
             username = IO.gets "Enter username: "
             username = String.trim(username)
