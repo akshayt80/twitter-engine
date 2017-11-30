@@ -8,7 +8,8 @@ defmodule Server do
         {:ok, listen_socket} = :gen_tcp.listen(port,[:binary,
                                                     {:ip, {0,0,0,0}},
                                                     {:packet, 0},
-                                                    {:active, false}])
+                                                    {:active, false},
+                                                    {:reuseaddr, true}])
         Logger.debug "socket connection established"
         #spawn fn -> loop_acceptor(listen_socket, self()) end
         Logger.debug "creating tables"
@@ -91,8 +92,8 @@ defmodule Server do
                        "register" -> GenServer.cast(:myServer, {:register, data["username"], worker})
                        "login" -> GenServer.cast(:myServer, {:login, data["username"], worker})
                        "logout" -> GenServer.cast(:myServer, {:logout, data["username"]})
-                       "hashtag" -> GenServer.cast(:myServer, {:hashtag, data["username"], data["username"], worker})
-                       "mention" -> GenServer.cast(:myServer, {:mention, data["username"], data["username"], worker})
+                       "hashtag" -> GenServer.cast(:myServer, {:hashtag, data["hashtag"], data["username"], worker})
+                       "mention" -> GenServer.cast(:myServer, {:mention, data["mention"], data["username"], worker})
                        "tweet" -> GenServer.cast(:myServer, {:tweet, data["username"], data["tweet"]})
                        "subscribe" -> GenServer.cast(:myServer, {:subscribe, data["username"], data["users"]})
                        "unsubscribe" -> GenServer.cast(:myServer, {:unsubscribe, data["username"], data["users"]})
@@ -255,7 +256,7 @@ defmodule Server do
             # map = Map.put map, 'mentions', mentionMap
             
             for user <- mentionedUsers do
-                Logger.debug "adding mention :#{user} to mentions table for tweet: #{tweet}"
+                Logger.debug "adding mention: #{user} to mentions table for tweet: #{tweet}"
                 add_mention_tweet(user, tweet)
                 value = String.split(user, ["@", "+"], trim: true) |> List.first
                 port = get_user_port(value)
