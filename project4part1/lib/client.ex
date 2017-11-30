@@ -52,10 +52,10 @@ defmodule Client do
 
 
         if mode == :simulate do
-            :timer.sleep 1000
             # subscribe to users
             Logger.debug "performing bulk_subscription for user: #{username} followers: #{inspect(users)}"
             bulk_subscription(socket, users, username)
+            timer.sleep 1000
         end
 
         if mode == :interactive do
@@ -77,10 +77,10 @@ defmodule Client do
             simulate_logout(socket, username, frequency)
         else
             if frequency == :medium do
-                :timer.sleep(700)
+                :timer.sleep(400)
                 simulate_logout(socket, username, frequency)
             else
-                :timer.sleep(1200)
+                :timer.sleep(800)
                 simulate_logout(socket, username, frequency)
             end
         end
@@ -368,7 +368,7 @@ defmodule Client do
     end
 
     defp bulk_subscription(socket, users, username) do
-        user_lists = users |> Enum.chunk_every(100)
+        user_lists = users |> Enum.chunk_every(70)
         for user_list <- user_lists do
             data = %{"function"=> "bulk_subscription", "users"=> users, "username"=> username}
             send_message(socket, data)
