@@ -2,23 +2,26 @@ defmodule Client do
     use GenServer
     require Logger
     def simulate(socket, user_count \\ 3) do
-        user_set = 1..user_count |> Enum.reduce(MapSet.new, fn(x, acc) -> MapSet.put(acc, "user_#{x}") end)
+        user_set = 1..user_count |> Enum.reduce(MapSet.new, fn(_, acc) -> MapSet.put(acc, generate_random_username()) end)
         constant = zipf_constant(user_count)
         Logger.debug "zipf constant: #{constant}"
         # Top 10%  and bootom 10% of total
         high = round(:math.ceil(user_count * 0.1))
         low = user_count - high
-        for n <- 1..user_count do
-            username = "user_#{n}"
+
+        :ets.new(:incomplete_packet, [:set, :public, :named_table, read_concurrency: true])
+
+        for {username, pos} <- Enum.with_index(user_set) do
+            #username = "user_#{n}"
             available_subscribers = MapSet.difference(user_set, MapSet.new([username]))
-            subscriber_count = zipf_prob(constant, n, user_count)
-            Logger.debug "user: user_#{n} subscriber_count: #{subscriber_count}"
+            subscriber_count = zipf_prob(constant, pos+1, user_count)
+            Logger.debug "user: #{username} subscriber_count: #{subscriber_count}"
             subscribers = get_subscribers(available_subscribers, subscriber_count)
             frequency = :medium
-            if n <= high do
+            if (pos+1) <= high do
                 frequency = :high
             end
-            if n > low do
+            if (pos+1) > low do
               frequency = :low
             end
             spawn fn -> start_link(socket, :simulate, username, subscribers, frequency) end
@@ -36,6 +39,7 @@ defmodule Client do
         if mode == :interactive do
             username = IO.gets "Enter username: "
             username = String.trim(username)
+            :ets.new(:incomplete_packet, [:set, :public, :named_table, read_concurrency: true])
         else
             #username = "user_#{number}"
             Logger.debug "username given #{username} with frequency:#{frequency}"
@@ -63,7 +67,7 @@ defmodule Client do
 
     defp simulative_client(socket, username, frequency) do
         #send tweet
-        tweet = generate_random_str(100)
+        tweet = generate_random_tweet(100)
         Logger.debug "#{username} sending tweet: #{tweet}"
         send_tweet(socket, tweet, username)
         #sleep
@@ -237,6 +241,11 @@ defmodule Client do
             multiple_data = response |> String.split("}", trim: :true)
             for data <- multiple_data do
                 Logger.debug "data to be decoded: #{inspect(data)}"
+                incomplete_packet = get_incomplete_packet()
+                if incomplete_packet != false do
+                    data = "#{incomplete_packet}#{data}"
+                    Logger.debug "Found incomplete_packet and modified to: #{data}"
+                end
                 try do
                     data = Poison.decode!("#{data}}")
                     Logger.debug "received data at user #{username} data: #{inspect(data)}"
@@ -253,7 +262,8 @@ defmodule Client do
                         "feed" -> GenServer.cast(:"#{username}", {:feed, data["feed"]})
                     end
                 rescue
-                    Poison.SyntaxError -> Logger.error "Got poison error for data: #{data}"
+                    Poison.SyntaxError -> Logger.debug "Got poison error for data: #{data}"
+                    insert_incomplete_packet(data)
                 end
             end
         end
@@ -381,11 +391,33 @@ defmodule Client do
     # Client utility functions
     #############################
 
-    defp generate_random_str(len) do
-        common_str = "  abcdefghijklmnopqrstuvwxyz  0123456789"
+    defp insert_incomplete_packet(data)do
+       :ets.insert(:incomplete_packet, {"incomplete_packet", data})
+    end
+
+    defp get_incomplete_packet() do
+        packet = false
+        if :ets.member(:incomplete_packet, "incomplete_packet") do
+            packet = :ets.lookup_element(:incomplete_packet, "incomplete_packet", 2)
+            :ets.delete(:incomplete_packet, "incomplete_packet")
+        end
+        packet
+    end
+
+    defp generate_random_str(len, common_str) do
         list = common_str |> String.split("", trim: true) |> Enum.shuffle
         random_str = 1..len |> Enum.reduce([], fn(_, acc) -> [Enum.random(list) | acc] end) |> Enum.join("")
         random_str
+    end
+
+    defp generate_random_username(len \\ 9) do
+        common_str = "abcdefghijklmnopqrstuvwxyz0123456789"
+        generate_random_str(len, common_str)
+    end
+
+    defp generate_random_tweet(len) do
+        common_str = "  abcdefghijklmnopqrstuvwxyz  0123456789"
+        generate_random_str(len, common_str)
     end
 
     defp zipf_constant(users) do
