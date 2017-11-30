@@ -23,12 +23,16 @@ defmodule Project4part1 do
 
       server_ip = parse_ip(Enum.at(args, 1))
       mode = Enum.at(args, 2)
+      # Connect to server
+      Logger.debug "Establishing Server connection"
+      {:ok, socket} = :gen_tcp.connect(server_ip, port, [:binary, {:active, false},{:packet, 0}])
+      Logger.debug "Server Connection Established"
       if mode == "i" do
         Logger.debug "Starting as Interactive Client"
-        Client.start_link(server_ip, port)
+        Client.start_link(socket)
       else
         user_count = Enum.at(args, 3) |> String.to_integer
-        Client.simulate(server_ip, port, user_count)
+        Client.simulate(socket, user_count)
       end
     end
   end
