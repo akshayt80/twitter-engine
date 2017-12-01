@@ -11,7 +11,6 @@ defmodule Server do
                                                     {:active, false},
                                                     {:reuseaddr, true}])
         Logger.debug "socket connection established"
-        #spawn fn -> loop_acceptor(listen_socket, self()) end
         Logger.debug "creating tables"
         Logger.debug "creating hashtags table"
         :ets.new(:hashtags, [:set, :public, :named_table, read_concurrency: true])
@@ -23,17 +22,9 @@ defmodule Server do
         Logger.debug "creating counter record"
         :ets.new(:counter, [:set, :public, :named_table, read_concurrency: true])
         initialize_counters()
-        #:ets.insert(:counter, {"tweets", 0})
-        # using this to store map of user and port
         GenServer.start_link(__MODULE__, {MapSet.new, listen_socket}, name: :myServer)
         spawn fn -> stats_print() end
         loop_acceptor(listen_socket)
-        #keep_alive()
-    end
-    
-    def keep_alive() do
-        :timer.sleep 10000
-        keep_alive()
     end
 
     defp initialize_counters() do
@@ -65,7 +56,6 @@ defmodule Server do
     end
 
     defp serve(worker, incomplete_packet) do
-        # TODO:- handle errors {:error, :closed}
         {status, response} = :gen_tcp.recv(worker, 0)
         if status == :ok do
             # this will handle the case when there are more than one
@@ -82,10 +72,6 @@ defmodule Server do
                     data = Poison.decode!("#{data}}")
                     Logger.debug "received data from worker #{inspect(worker)} data: #{inspect(data)}"
 
-                    # Send value of k as String
-                    #Logger.debug "sending initial message"
-                    #:gen_tcp.send(worker, "Welcome to the Twitter")
-                    #GenServer.cast(:myServer, {:initial, data, worker})
                     case Map.get(data, "function") do
                        "register" -> GenServer.cast(:myServer, {:register, data["username"], worker})
                        "login" -> GenServer.cast(:myServer, {:login, data["username"], worker})
@@ -108,13 +94,11 @@ defmodule Server do
     end
 
     defp send_response(client, data) do
-        # TODO:- Decide whether we want to update counter for feed as well
         encoded_response = Poison.encode!(data)
         :gen_tcp.send(client, encoded_response)
     end
 
     def init(set) do
-        #GenServer.cast(self(), {:accept})
         {:ok, set}
     end
 
@@ -124,48 +108,25 @@ defmodule Server do
     end
 
     def handle_cast({:register, username, client}, state) do
-        # if username unique then send ok
-        # else send :error
         user = get_user(username)
         socket = elem(state, 1)
         set = elem(state, 0)
-        # TODO:- registeredUser set becomes redundant as we have userid in main map
+
         if user != false do
-            #{:reply, {:error, "already exists"}, map}
             send_response(client, %{"function"=> "register", "username"=> username, "status"=> "error", "message"=> "Username already exists"})
         else
             Logger.debug "added new user to set"
             set = set |> MapSet.put(username)
-            #currentRegisteredUsers = map["registeredUsers"]
-            #updatedRegisteredUsers = MapSet.put(currentRegisteredUsers, username)
-            # {username, status, subscribers, feed, port}
+
             insert(username, :online, MapSet.new, :queue.new, client)
-            # map = Map.put(map, username, %{
-            #                         "subscribers" => MapSet.new,
-            #                         "feed" => :queue.new,
-            #                         "port" => client
-            #                     }
-            #                 )
-            # map = Map.put(map, "registeredUsers", updatedRegisteredUsers)
-            #send_response(client, %{"function"=> "register", "status"=> "success", "message"=> "Added new user", "users"=> set})
+
             update_counter("total_users")
             update_counter("online_users")
-            #{:reply, {:ok, "success"}, Map.put(map, "registeredUsers", registeredUsers)}
         end
         {:noreply, {set, socket}}
     end
 
     def handle_cast({:login, username, client}, set) do
-        # online_set = map['online']
-        # offline_set = map['offline']
-        # if MapSet.member?(offline_set, username) do
-        #     offline_set = MapSet.delete(offline_set, username)
-        #     # TODO:- send the messages accumulated at the server asyncly while the client was offline
-        # end
-        # online_set = MapSet.put(online_set, username)
-        # temp_dict = %{'online' => online_set, 'offline' => offline_set}
-        # map = Map.merge(map, temp_dict) 
-        #{:reply, {:ok, "success"}, map}
         if member_of_users(username) do
             offline_users = :ets.lookup_element(:counter, "offline_users", 2)
             if offline_users > 0 do
@@ -175,7 +136,6 @@ defmodule Server do
             if user_has_feeds(username) do
                 Logger.debug "#{username} has some tweets in feed"
                 spawn fn ->  send_feed(username, client) end
-                #empty_user_feed(username)
             end
             update_counter("online_users")
         end
@@ -183,15 +143,6 @@ defmodule Server do
     end
 
     def handle_cast({:logout, username}, set) do
-        # online_set = map['online']
-        # offline_set = map['offline']
-        # if MapSet.member?(online_set, username) do
-        #     online_set = MapSet.delete(online_set, username)
-        # end
-        # offline_set = MapSet.put(offline_set, username)
-        # temp_dict = %{'online' => online_set, 'offline' => offline_set}
-        # map = Map.merge(map, temp_dict) 
-        #{:reply, {:ok, "success"}, map}
         if member_of_users(username) do
             update_user_status(username, :offline)
             update_counter("offline_users")
@@ -201,48 +152,22 @@ defmodule Server do
     end
 
     def handle_cast({:hashtag, hashtag, username, client}, map) do
-        # hashtags = map["hashtags"]
-        # if Map.has_key? hashtags, hashtag do
-        #     # TODO:- see how to send a list as bytes in elixir
-        #     #{:reply, {:hashtag, Map.get(hashtags, hashtag)}, map}
-        #     {:noreply, map}
-
-        # else
-        #     #{:reply, {:nohashtag, "None"}, map}
-        #     {:noreply, map}
-
-        # end
         Logger.debug "sending tweets containing hashtag: #{hashtag} to user: #{username}"
-        #hashtags = get_hashtag_tweets(hashtag)
         spawn fn -> send_hashtags(hashtag, client, username) end
         {:noreply, map}
     end
 
     def handle_cast({:mention, mention, username, client}, map) do
-        # mentions = map["mentions"]
-        # if Map.has_key? mentions, name do
-        #     # TODO:- see how to send a list as bytes in elixir
-        #     #{:reply, {:mention, Map.get(mentions, name)}, map}
-        #     {:noreply, map}
-        # else
-        #     #{:reply, {:nomention, "None"}, map}
-        #     {:noreply, map}
-        # end
         Logger.debug "sending tweets containing mention: #{mention} to user: #{username}"
-        #mentions = get_mention_tweets(mention)
         spawn fn -> send_mentions(mention, client, username) end
         {:noreply, map}
     end
 
     def handle_cast({:tweet, username, tweet}, map) do
-        # hashTagMap = Map.get map, 'hashtags'
-        # mentionMap = Map.get map, 'mentions'
         mentionedUsers = None
         components = SocialParser.extract(tweet,[:hashtags,:mentions])
         if Map.has_key? components, :hashtags do
             hashTagValues = Map.get(components, :hashtags)
-            #hashTagMap = loop(hashTagValues, List.last(hashTagValues), hashTagMap, tweet)
-            #map = Map.put map, 'hashtags', hashTagMap
             for hashtag <- hashTagValues do
                 Logger.debug "adding hashtag :#{hashtag} to hashtags table for tweet: #{tweet}"
                 add_hashtag_tweet(hashtag, tweet)
@@ -251,8 +176,6 @@ defmodule Server do
 
         if Map.has_key? components, :mentions do
             mentionedUsers = Map.get(components, :mentions)
-            # mentionMap = loop(mentionValues, List.last(mentionValues), mentionMap, tweet)
-            # map = Map.put map, 'mentions', mentionMap
             
             for user <- mentionedUsers do
                 Logger.debug "adding mention: #{user} to mentions table for tweet: #{tweet}"
@@ -272,11 +195,8 @@ defmodule Server do
                 end
             end
         end
-        # sender = get_user(username)
         subscribers = get_user_subscribers(username)
         for subscriber <- subscribers do
-            # user_info = map[subscriber]
-            #port = user_info['port']
             Logger.debug "mentioned_users: #{inspect(mentionedUsers)}"
             if mentionedUsers != None and Enum.member?(mentionedUsers, subscriber) do
                 Logger.debug "Not sending the message again"
@@ -298,12 +218,6 @@ defmodule Server do
     end
 
     def handle_cast({:subscribe, username, follow}, map) do
-        #TODO:- using ets follow expected to be list of people user want to follow
-        # user = map[follow]
-        # user_subscribers = user['subscribers']
-        # updated_subscribers = MapSet.put(user_subscribers, username)
-        # updated_user = Map.put(user, 'subscribers', updated_subscribers)
-        # map = Map.put(map, follow, updated_user)
         for sub <- follow do
             Logger.debug "subscribing user: #{username} to: #{sub}"
             add_user_subscibers(sub, username)
@@ -527,35 +441,5 @@ defmodule Server do
         else
             :queue.in(value, queue)
         end
-    end
-
-    defp dequeue(queue) do
-        {element, queue} = :queue.out queue
-        if element == :empty do
-            {:empty, queue}
-        else
-            value = elem(element, 1)
-            {value, queue}
-        end
-    end
-
-    defp peek(queue) do
-        result = :queue.peek queue
-        if is_tuple result do
-            elem(result, 1)
-        else
-            result
-        end
-    end
-
-    defp loop(list, last, map, tweet, current) when last == current do
-        map
-    end
-
-    defp loop(list, last, map, tweet, current \\ None) do
-        [current| list] = list
-        set = Map.get(map, current) |> MapSet.put(tweet)
-        map = Map.put map, current, set
-        loop(list, last, map, current)
     end
 end
