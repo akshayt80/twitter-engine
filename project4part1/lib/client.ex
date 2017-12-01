@@ -11,6 +11,9 @@ defmodule Client do
 
         :ets.new(:incomplete_packet, [:set, :public, :named_table, read_concurrency: true])
 
+        # central listner
+        spawn fn -> listen(socket) end
+
         for {username, pos} <- Enum.with_index(user_set) do
             #username = "user_#{n}"
             available_subscribers = MapSet.difference(user_set, MapSet.new([username]))
@@ -46,7 +49,7 @@ defmodule Client do
         end
 
         GenServer.start_link(__MODULE__, %{"mode"=> mode, "retweet_prob"=> 10}, name: :"#{username}")
-        spawn fn -> listen(socket, username) end
+        #spawn fn -> listen(socket, username) end
 
         perform_registration(socket, username)
 
@@ -234,7 +237,7 @@ defmodule Client do
 
     ####################
 
-    def listen(socket, username) do
+    def listen(socket) do
         {status, response} = :gen_tcp.recv(socket, 0)
         if status == :ok do
             # this will handle the case when there are more than one
@@ -249,7 +252,7 @@ defmodule Client do
                 try do
                     data = Poison.decode!("#{data}}")
                     Logger.debug "received data at user #{username} data: #{inspect(data)}"
-
+                    username = data["username"]
                     # Send value of k as String
                     #Logger.debug "sending initial message"
                     #:gen_tcp.send(worker, "Welcome to the Twitter")
@@ -267,7 +270,7 @@ defmodule Client do
                 end
             end
         end
-        listen(socket, username)
+        listen(socket)
     end
 
     def perform_logout(server, username, autologin \\ false) do
