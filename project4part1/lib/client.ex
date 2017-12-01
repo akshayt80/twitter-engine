@@ -21,13 +21,15 @@ defmodule Client do
             subscriber_count = zipf_prob(constant, pos+1, user_count)
             Logger.debug "user: #{username} subscriber_count: #{subscriber_count}"
             subscribers = get_subscribers(available_subscribers, subscriber_count)
-            frequency = :medium
-            if (pos+1) <= high do
-                frequency = :high
-            end
-            if (pos+1) > low do
-              frequency = :low
-            end
+            frequency = if (pos + 1) <= high do
+                            :high
+                        else
+                            if (pos + 1) > low do
+                                :low
+                            else
+                                :medium
+                            end
+                        end
             spawn fn -> start_link(socket, :simulate, username, subscribers, frequency) end
         end
         keep_alive()
@@ -45,7 +47,6 @@ defmodule Client do
             username = String.trim(username)
             :ets.new(:incomplete_packet, [:set, :public, :named_table, read_concurrency: true])
         else
-            #username = "user_#{number}"
             Logger.debug "username given #{username} with frequency:#{frequency}"
         end
 
