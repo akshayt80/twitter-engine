@@ -96,6 +96,7 @@ defmodule Server do
                        "subscribe" -> GenServer.cast(:myServer, {:subscribe, data["username"], data["users"]})
                        "unsubscribe" -> GenServer.cast(:myServer, {:unsubscribe, data["username"], data["users"]})
                        "bulk_subscription" -> GenServer.cast(:myServer, {:bulk_subscription, data["username"], data["users"]})
+                       _ -> Logger.error "unmatched clause for data: #{inspect(data)}"
                     end
                 rescue
                     Poison.SyntaxError -> Logger.debug "Got poison error for data: #{data}"

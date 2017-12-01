@@ -263,6 +263,7 @@ defmodule Client do
                         "mention" -> GenServer.cast(:"#{username}", {:mention, data["tweets"]})
                         "tweet" -> GenServer.cast(:"#{username}", {:tweet, username, data["sender"], data["tweet"], socket})
                         "feed" -> GenServer.cast(:"#{username}", {:feed, data["feed"]})
+                        _ -> Logger.error "unmatched clause for data: #{inspect(data)}"
                     end
                 rescue
                     Poison.SyntaxError -> Logger.debug "Got poison error for data: #{data}"
