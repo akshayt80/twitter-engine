@@ -251,8 +251,8 @@ defmodule Client do
                 end
                 try do
                     data = Poison.decode!("#{data}}")
-                    Logger.debug "received data at user #{username} data: #{inspect(data)}"
                     username = data["username"]
+                    Logger.debug "received data at user #{username} data: #{inspect(data)}"
                     # Send value of k as String
                     #Logger.debug "sending initial message"
                     #:gen_tcp.send(worker, "Welcome to the Twitter")
