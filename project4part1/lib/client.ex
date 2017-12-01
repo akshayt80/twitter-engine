@@ -9,10 +9,10 @@ defmodule Client do
         high = round(:math.ceil(user_count * 0.1))
         low = user_count - high
 
-        :ets.new(:incomplete_packet, [:set, :public, :named_table, read_concurrency: true])
+        packet_table = :ets.new(:incomplete_packet, [:set, :public, read_concurrency: true])
 
         # central listner
-        spawn fn -> listen(socket) end
+        spawn fn -> listen(socket, packet_table) end
 
         for {username, pos} <- Enum.with_index(user_set) do
             #username = "user_#{n}"
@@ -237,14 +237,14 @@ defmodule Client do
 
     ####################
 
-    def listen(socket) do
+    def listen(socket, packet_table) do
         {status, response} = :gen_tcp.recv(socket, 0)
         if status == :ok do
             # this will handle the case when there are more than one
             multiple_data = response |> String.split("}", trim: :true)
             for data <- multiple_data do
                 Logger.debug "data to be decoded: #{inspect(data)}"
-                incomplete_packet = get_incomplete_packet()
+                incomplete_packet = get_incomplete_packet(packet_table)
                 if incomplete_packet != false do
                     data = "#{incomplete_packet}#{data}"
                     Logger.debug "Found incomplete_packet and modified to: #{data}"
@@ -267,11 +267,11 @@ defmodule Client do
                     end
                 rescue
                     Poison.SyntaxError -> Logger.debug "Got poison error for data: #{data}"
-                    insert_incomplete_packet(data)
+                    insert_incomplete_packet(data, packet_table)
                 end
             end
         end
-        listen(socket)
+        listen(socket, packet_table)
     end
 
     def perform_logout(server, username, autologin \\ false) do
@@ -395,15 +395,15 @@ defmodule Client do
     # Client utility functions
     #############################
 
-    defp insert_incomplete_packet(data)do
-       :ets.insert(:incomplete_packet, {"incomplete_packet", data})
+    defp insert_incomplete_packet(data, table)do
+       :ets.insert(table, {"incomplete_packet", data})
     end
 
-    defp get_incomplete_packet() do
+    defp get_incomplete_packet(table) do
         packet = false
-        if :ets.member(:incomplete_packet, "incomplete_packet") do
-            packet = :ets.lookup_element(:incomplete_packet, "incomplete_packet", 2)
-            :ets.delete(:incomplete_packet, "incomplete_packet")
+        if :ets.member(table, "incomplete_packet") do
+            packet = :ets.lookup_element(table, "incomplete_packet", 2)
+            :ets.delete(table, "incomplete_packet")
         end
         packet
     end

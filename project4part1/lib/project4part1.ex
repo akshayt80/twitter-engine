@@ -24,17 +24,28 @@ defmodule Project4part1 do
       server_ip = parse_ip(Enum.at(args, 1))
       mode = Enum.at(args, 2)
       # Connect to server
-      Logger.debug "Establishing Server connection"
-      {:ok, socket} = :gen_tcp.connect(server_ip, port, [:binary, {:active, false},{:packet, 0}])
-      Logger.debug "Server Connection Established"
       if mode == "i" do
+        Logger.debug "Establishing Server connection"
+        {:ok, socket} = :gen_tcp.connect(server_ip, port, [:binary, {:active, false},{:packet, 0}])
+        Logger.debug "Server Connection Established"
         Logger.debug "Starting as Interactive Client"
         Client.start_link(socket)
       else
         user_count = Enum.at(args, 3) |> String.to_integer
-        Client.simulate(socket, user_count)
+        subprocess_count = Enum.at(args, 4) |> String.to_integer
+        for _ <- 1..subprocess_count do
+          Logger.debug "Establishing Server connection"
+          {:ok, socket} = :gen_tcp.connect(server_ip, port, [:binary, {:active, false},{:packet, 0}])
+          Logger.debug "Server Connection Established"
+          spawn fn -> Client.simulate(socket, user_count) end
+        end
       end
     end
+    keep_alive()
+  end
+  def keep_alive() do
+      :timer.sleep 10000
+      keep_alive()
   end
   defp parse_ip(str) do
     # convert input string 127.0.0.1 to tuple of integers like {127, 0, 0, 1}
