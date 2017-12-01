@@ -9,13 +9,14 @@ defmodule Client do
         high = round(:math.ceil(user_count * 0.1))
         low = user_count - high
 
+        # table to keep track of incomplete packet and try to use it in next iteration
+        # as data is a stream
         packet_table = :ets.new(:incomplete_packet, [:set, :public, read_concurrency: true])
 
         # central listner
         spawn fn -> listen(socket, packet_table) end
 
         for {username, pos} <- Enum.with_index(user_set) do
-            #username = "user_#{n}"
             available_subscribers = MapSet.difference(user_set, MapSet.new([username]))
             subscriber_count = zipf_prob(constant, pos+1, user_count)
             Logger.debug "user: #{username} subscriber_count: #{subscriber_count}"
@@ -49,7 +50,6 @@ defmodule Client do
         end
 
         GenServer.start_link(__MODULE__, %{"mode"=> mode, "retweet_prob"=> 10}, name: :"#{username}")
-        #spawn fn -> listen(socket, username) end
 
         perform_registration(socket, username)
 
@@ -113,11 +113,8 @@ defmodule Client do
     end
 
     defp interactive_client(socket, username) do
-        option = IO.gets "Options:\n1. Tweet\n2. Hashtag query\n3. Mention query\n4. Subscribe\n5. unsubscribe\n6. Login\n7. Logout\nEnter your choice: "
+        option = IO.gets "Options:\n1. Tweet\n2. Hashtag query\n3. Mention query\n4. Subscribe\n5. Unsubscribe\n6. Login\n7. Logout\nEnter your choice: "
         case String.trim(option) do
-            # "1" -> username = IO.gets "Enter username: "
-            #         username = String.trim(username)
-            #         perform_registration(socket, username)
             "1" -> tweet = IO.gets "Enter tweet: "
                     send_tweet(socket, String.trim(tweet), username)
             "2" -> hashtag = IO.gets "Enter hashtag to query for: "
@@ -134,16 +131,6 @@ defmodule Client do
         end
         interactive_client(socket, username)
     end
-    #TODO:- write a function which creates simulation for client
-    # defp start_communication(socket, parent) do
-    #     Logger.debug "sending Hello"
-    #     raw_data = %{"function" => :register, "reply"=> true, "data"=> %{}}
-    #     data = Poison.encode!(raw_data)
-    #     socket |> :gen_tcp.send(data)
-    #     # Receive k value from server
-    #     {:ok, data} = :gen_tcp.recv(socket, 0)
-    #     Logger.debug "received message from server: #{data}"
-    # end
 
     def init(map) do
         {:ok, map}
@@ -154,40 +141,9 @@ defmodule Client do
         :gen_tcp.send(receiver, encoded_response)
     end
 
-    def receive_message(receiver) do
-        # TODO:- do thorough testing of this function as it sometimes causes error
-        {:ok, data} = :gen_tcp.recv(receiver, 0)
-        Logger.debug "Received message: #{data}"
-        Poison.decode!(data)
-    end
-
-    defp blocking_send_message(receiver, data) do
-        send_message(receiver, data)
-        receive_message(receiver)
-    end
-
-    defp create_message_map(action, data) do
-        %{"function" => action, "data"=> data}
-    end
-
     def handle_cast({:register, data}, map) do
-        #data = %{"username"=> username}
         if data["status"] != "success" do
-            Logger.debug "No success while registering"
-            #perform_registration(server, generate_random_str())
-        else
-            # send login message to server
-           # send_message(server, %{"function"=> "login", "username"=> username})
-
-            # send subscriber message to server
-            users = data["users"]
-            Logger.info "Current users at server: #{inspect(users)}"
-            # take user input for subscribing to some users or pick some random users to subscribe
-            #input = IO.gets "Enter user to subscribe to space separated? "
-            #friends = input |> String.split([" ", "\n"], trim: true)
-            #friend = String.trim(input, "\n")
-            #data = %{"function"=> "subscribe", "username"=> username, "users"=> friends}
-            #send_message(server, data)
+            Logger.info "No success while registering"
         end
         {:noreply, map}
     end
@@ -253,10 +209,6 @@ defmodule Client do
                     data = Poison.decode!("#{data}}")
                     username = data["username"]
                     Logger.debug "received data at user #{username} data: #{inspect(data)}"
-                    # Send value of k as String
-                    #Logger.debug "sending initial message"
-                    #:gen_tcp.send(worker, "Welcome to the Twitter")
-                    #GenServer.cast(:myClient, {:initial, data, worker})
                     case data["function"] do
                         "register" -> GenServer.cast(:"#{username}", {:register, data})
                         "hashtag" -> GenServer.cast(:"#{username}", {:hashtag, data["tweets"]})
@@ -278,18 +230,14 @@ defmodule Client do
         # send logout message
         data = %{"function"=> "logout", "username"=> username}
         send_message(server, data)
-        # sleep for some random time between 1 to 10 sec
         if autologin do
+            # sleep for some random time between 1 to 5000 milliseconds
             sec = :rand.uniform(5000)
             Logger.debug "#{username} sleeping for #{sec} seconds"
             :timer.sleep sec
             # send login back to server
             perform_login(server, username)
         end
-        #response = blocking_send_message(server, data)
-        #Logger.info "Tweets while you were offline: #{inspect(response["tweets"])}"
-        # print the feed
-        # TODO:- get the feed
     end
 
     defp perform_login(server, username) do
@@ -299,32 +247,9 @@ defmodule Client do
     end
 
     def perform_registration(server, username \\ "akshayt80") do
-        # send register message to server
         data = %{"function"=> "register", "username"=> username}
         send_message(server, data)
-        # data = blocking_send_message(server, data)
-        # if data["status"] != "success" do
-        #     Logger.debug "No success while registering"
-        #     #perform_registration(server, generate_random_str())
-        # else
-        #     # send login message to server
-        #    # send_message(server, %{"function"=> "login", "username"=> username})
-
-        #     # send subscriber message to server
-        #     users = data["users"]
-        #     Logger.info "Current users at server: #{inspect(users)}"
-        #     # take user input for subscribing to some users or pick some random users to subscribe
-        #     #input = IO.gets "Enter user to subscribe to space separated? "
-        #     #friends = input |> String.split([" ", "\n"], trim: true)
-        #     #friend = String.trim(input, "\n")
-        #     #data = %{"function"=> "subscribe", "username"=> username, "users"=> friends}
-        #     #send_message(server, data)
-        # end
     end
-
-    # defp perform_first_login(server, users) do
-    #     # randomly pick some user to subscribe to
-    # end
 
     def received_tweet(server, username, tweet) do
         # print tweet
@@ -343,19 +268,6 @@ defmodule Client do
             Logger.info "Tweet: #{item}"
         end
     end
-
-    # defp query_server(server, username, key) do
-    #     # no need to do this in simulator
-    #     # send message to server to get mentions
-    #     data = %{'function'=> 'mention', 'name'=> username}
-    #     send_message(server, data)
-    #     # print all the tweets with mention
-    #     # TODO:- server is not sending back the tweets from feed
-    #     # send message to server to get hashtags
-    #     data = %{'function'=> 'hashtags', 'hashtag'=> username}
-    #     send_message(server, data)
-    #     # print all the tweets with hashtag
-    # end
 
     defp send_tweet(socket, tweet, username) do
         data = %{"function"=> "tweet", "username"=> username, "tweet"=> tweet}
