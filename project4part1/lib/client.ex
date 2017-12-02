@@ -328,7 +328,7 @@ defmodule Client do
         random_str
     end
 
-    defp generate_random_username(len \\ 9) do
+    defp generate_random_username(len \\ 10) do
         common_str = "abcdefghijklmnopqrstuvwxyz0123456789"
         generate_random_str(len, common_str)
     end
