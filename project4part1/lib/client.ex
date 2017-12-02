@@ -186,7 +186,7 @@ defmodule Client do
     end
 
     def handle_cast({:feed, feed}, map) do
-        Logger.debug "Incoming feed which was accumulated while you were offline"
+        Logger.info "Incoming feed which was accumulated while you were offline"
         for item <- feed do
             Logger.info "Tweet: #{item}"
         end
