@@ -46,6 +46,7 @@ defmodule Client do
             username = IO.gets "Enter username: "
             username = String.trim(username)
             :ets.new(:incomplete_packet, [:set, :public, :named_table, read_concurrency: true])
+            spawn fn -> listen(socket, :incomplete_packet) end
         else
             Logger.debug "username given #{username} with frequency:#{frequency}"
         end
@@ -291,9 +292,9 @@ defmodule Client do
     end
 
     defp bulk_subscription(socket, users, username) do
-        user_lists = users |> Enum.chunk_every(70)
-        for user_list <- user_lists do
-            data = %{"function"=> "bulk_subscription", "users"=> users, "username"=> username}
+        user_chunk_list = users |> Enum.chunk_every(70)
+        for user_list <- user_chunk_list do
+            data = %{"function"=> "bulk_subscription", "users"=> user_list, "username"=> username}
             send_message(socket, data)
             :timer.sleep 50
         end
