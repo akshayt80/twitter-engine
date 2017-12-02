@@ -11,6 +11,14 @@ defmodule Server do
                                                     {:active, false},
                                                     {:reuseaddr, true}])
         Logger.debug "socket connection established"
+        initialize_tables()
+        initialize_counters()
+        GenServer.start_link(__MODULE__, listen_socket, name: :myServer)
+        spawn fn -> stats_print() end
+        loop_acceptor(listen_socket)
+    end
+
+    defp initialize_tables() do
         Logger.debug "creating tables"
         Logger.debug "creating hashtags table"
         :ets.new(:hashtags, [:set, :public, :named_table, read_concurrency: true])
@@ -21,17 +29,13 @@ defmodule Server do
         :ets.new(:users, [:set, :public, :named_table, read_concurrency: true])
         Logger.debug "creating counter record"
         :ets.new(:counter, [:set, :public, :named_table, read_concurrency: true])
-        initialize_counters()
-        GenServer.start_link(__MODULE__, {MapSet.new, listen_socket}, name: :myServer)
-        spawn fn -> stats_print() end
-        loop_acceptor(listen_socket)
     end
 
     defp initialize_counters() do
-        :ets.insert(:counter, {"tweets", 0})
-        :ets.insert(:counter, {"total_users", 0})
-        :ets.insert(:counter, {"online_users", 0})
-        :ets.insert(:counter, {"offline_users", 0})
+        insert_record(:counter, {"tweets", 0})
+        insert_record(:counter, {"total_users", 0})
+        insert_record(:counter, {"online_users", 0})
+        insert_record(:counter, {"offline_users", 0})
     end
 
     defp stats_print(period \\ 10000, last_tweet_count \\ 0) do
@@ -49,7 +53,7 @@ defmodule Server do
         Logger.debug "Ready to accept new connections"
         {:ok, worker} = :gen_tcp.accept(socket)
         incomplete_packet = :ets.new(:incomplete_packet, [:set, :public, read_concurrency: true])
-        # Spawn receive message in separate process
+        # Spawn separate process for each new connection which performs all the server tasks
         spawn fn -> serve(worker, incomplete_packet) end
         # Loop to accept new connection
         loop_acceptor(socket)
@@ -86,47 +90,38 @@ defmodule Server do
                     end
                 rescue
                     Poison.SyntaxError -> Logger.debug "Got poison error for data: #{data}"
-                    insert_incomplete_packet(data, incomplete_packet)
+                    insert_record(incomplete_packet, {"incomplete_packet", data})
                 end
             end
         end
         serve(worker, incomplete_packet)
     end
 
-    defp send_response(client, data) do
-        encoded_response = Poison.encode!(data)
-        :gen_tcp.send(client, encoded_response)
+    ######################
+    # GenServer functions
+    ######################
+
+    def init(listen_socket) do
+        {:ok, listen_socket}
     end
 
-    def init(set) do
-        {:ok, set}
-    end
-
-    def handle_cast({:accept}, state) do
-        {:ok, worker} = :gen_tcp.accept(elem(state, 1))
-        {:noreply, state}
-    end
-
-    def handle_cast({:register, username, client}, state) do
+    def handle_cast({:register, username, client}, listen_socket) do
         user = get_user(username)
-        socket = elem(state, 1)
-        set = elem(state, 0)
 
         if user != false do
             send_response(client, %{"function"=> "register", "username"=> username, "status"=> "error", "message"=> "Username already exists"})
         else
-            Logger.debug "added new user to set"
-            set = set |> MapSet.put(username)
+            Logger.debug "added new user: #{username} to set with socket: #{inspect(client)}"
 
-            insert(username, :online, MapSet.new, :queue.new, client)
+            insert_record(:users, {username, :online, MapSet.new, :queue.new, client})
 
-            update_counter("total_users")
-            update_counter("online_users")
+            increase_counter("total_users")
+            increase_counter("online_users")
         end
-        {:noreply, {set, socket}}
+        {:noreply, listen_socket}
     end
 
-    def handle_cast({:login, username, client}, set) do
+    def handle_cast({:login, username, client}, listen_socket) do
         if member_of_users(username) do
             offline_users = :ets.lookup_element(:counter, "offline_users", 2)
             if offline_users > 0 do
@@ -137,118 +132,111 @@ defmodule Server do
                 Logger.debug "#{username} has some tweets in feed"
                 spawn fn ->  send_feed(username, client) end
             end
-            update_counter("online_users")
+            increase_counter("online_users")
         end
-        {:noreply, set}
+        {:noreply, listen_socket}
     end
 
-    def handle_cast({:logout, username}, set) do
+    def handle_cast({:logout, username}, listen_socket) do
         if member_of_users(username) do
             update_user_status(username, :offline)
-            update_counter("offline_users")
+            increase_counter("offline_users")
             decrease_counter("online_users")
         end
-        {:noreply, set}
+        {:noreply, listen_socket}
     end
 
-    def handle_cast({:hashtag, hashtag, username, client}, map) do
+    def handle_cast({:hashtag, hashtag, username, client}, listen_socket) do
         Logger.debug "sending tweets containing hashtag: #{hashtag} to user: #{username}"
         spawn fn -> send_hashtags(hashtag, client, username) end
-        {:noreply, map}
+        {:noreply, listen_socket}
     end
 
-    def handle_cast({:mention, mention, username, client}, map) do
+    def handle_cast({:mention, mention, username, client}, listen_socket) do
         Logger.debug "sending tweets containing mention: #{mention} to user: #{username}"
         spawn fn -> send_mentions(mention, client, username) end
-        {:noreply, map}
+        {:noreply, listen_socket}
     end
 
-    def handle_cast({:tweet, username, tweet}, map) do
+    def handle_cast({:tweet, username, tweet}, listen_socket) do
         mentionedUsers = None
         components = SocialParser.extract(tweet,[:hashtags,:mentions])
         if Map.has_key? components, :hashtags do
-            hashTagValues = Map.get(components, :hashtags)
+            hashTagValues = components[:hashtags]
             for hashtag <- hashTagValues do
                 Logger.debug "adding hashtag :#{hashtag} to hashtags table for tweet: #{tweet}"
                 add_hashtag_tweet(hashtag, tweet)
             end
         end
 
-        if Map.has_key? components, :mentions do
-            mentionedUsers = Map.get(components, :mentions)
-            
+        if Map.has_key?(components, :mentions) do
+            mentionedUsers = components[:mentions]
             for user <- mentionedUsers do
                 Logger.debug "adding mention: #{user} to mentions table for tweet: #{tweet}"
                 add_mention_tweet(user, tweet)
-                value = String.split(user, ["@", "+"], trim: true) |> List.first
-                port = get_user_port(value)
-                status = get_user_status(value)
-                if value != username do
-                    update_counter("tweets")
-                    if status == :online do
-                        Logger.debug "Sending to: #{value} tweet: #{tweet}"
-                        send_response(port, %{"function"=> "tweet", "sender"=> username, "tweet"=> tweet, "username"=> value})
-                    else
-                        Logger.debug "Adding to user feed as #{value} is not online"
-                        add_user_feed(value, tweet)
-                    end
+                mentioned_user = String.split(user, ["@", "+"], trim: true) |> List.first
+                if mentioned_user != username do
+                    send_tweet(mentioned_user, username, tweet)
                 end
             end
+            mentionedUsers = mentionedUsers |> Enum.reduce([], fn(x, acc) -> [List.first(String.split(x, ["@", "+"], trim: true)) |acc] end)
         end
         subscribers = get_user_subscribers(username)
         for subscriber <- subscribers do
-            Logger.debug "mentioned_users: #{inspect(mentionedUsers)}"
+            Logger.debug "subscribers: #{subscriber} mentioned_users: #{inspect(mentionedUsers)}"
             if mentionedUsers != None and Enum.member?(mentionedUsers, subscriber) do
                 Logger.debug "Not sending the message again"
             else
-                port = get_user_port(subscriber)
-                status = get_user_status(subscriber)
-                if status == :online do
-                    Logger.debug "Sending to: #{subscriber} tweet: #{tweet}"
-                    send_response(port, %{"function"=> "tweet", "sender"=> username, "tweet"=> tweet, "username"=> subscriber})
-                else
-                    Logger.debug "Adding to user feed as #{subscriber} is not online"
-                    add_user_feed(subscriber, tweet)
-                end
-                update_counter("tweets")
+                send_tweet(subscriber, username, tweet)
             end
         end
 
-        {:noreply, map}
+        {:noreply, listen_socket}
     end
 
-    def handle_cast({:subscribe, username, follow}, map) do
+    def handle_cast({:subscribe, username, follow}, listen_socket) do
         for sub <- follow do
             Logger.debug "subscribing user: #{username} to: #{sub}"
             add_user_subscibers(sub, username)
         end
-        {:noreply, map}
+        {:noreply, listen_socket}
     end
 
-    def handle_cast({:bulk_subscription, username, follwers}, map) do
+    def handle_cast({:bulk_subscription, username, follwers}, listen_socket) do
         Logger.debug "adding bulk followers for user: #{username}"
         add_bulk_user_subscribers(username, follwers)
-        {:noreply, map}
+        {:noreply, listen_socket}
     end
 
-    def handle_cast({:unsubscribe, username, unsubscribe}, map) do
+    def handle_cast({:unsubscribe, username, unsubscribe}, listen_socket) do
         for unsub <- unsubscribe do
             remove_user_subscriber(unsub, username)
         end
-        {:noreply, map}
-    end
-
-    def handle_info({:tcp, socket, msg}, map) do
-        Logger.debug "Incoming message: #{msg}"
-        {:noreply, map}
+        {:noreply, listen_socket}
     end
 
     ##########################
     # Server Utility functions
     ##########################
 
-    defp insert_incomplete_packet(data, table)do
-       :ets.insert(table, {"incomplete_packet", data})
+    defp send_response(client, data) do
+        encoded_response = Poison.encode!(data)
+        :gen_tcp.send(client, encoded_response)
+    end
+
+
+    defp send_tweet(to, sender, tweet) do
+        Logger.debug "in send_tweet"
+        port = get_user_port(to)
+        status = get_user_status(to)
+        if status == :online do
+            Logger.debug "Sending to: #{to} tweet: #{tweet} on socket: #{inspect(port)}"
+            send_response(port, %{"function"=> "tweet", "sender"=> sender, "tweet"=> tweet, "username"=> to})
+        else
+            Logger.debug "Adding to user feed as #{to} is not online"
+            add_user_feed(to, tweet)
+        end
+        increase_counter("tweets")
     end
 
     defp get_incomplete_packet(table) do
@@ -260,12 +248,16 @@ defmodule Server do
         packet
     end
 
-    defp update_counter(field) do
-        :ets.update_counter(:counter, field, 1)
+    defp update_counter(field, factor) do
+        :ets.update_counter(:counter, field, factor)
+    end
+
+    defp increase_counter(field) do
+        update_counter(field, 1)
     end
 
     defp decrease_counter(field) do
-        :ets.update_counter(:counter, field, -1)
+        update_counter(field, -1)
     end
 
     defp member_of_mentions(mention) do
@@ -274,7 +266,7 @@ defmodule Server do
 
     defp get_mention_tweets(mention) do
         if member_of_mentions(mention) do
-            :ets.lookup(:mentions, mention) |> List.first |> elem(1) # |> MapSet.to_list()
+            :ets.lookup_element(:mentions, mention, 2)
         else
             MapSet.new
         end
@@ -284,17 +276,17 @@ defmodule Server do
         mentions = :ets.lookup(:mentions, mention)
         if mentions != [] do
             updated_mentions = mentions |> List.first |> elem(1) |> MapSet.put(tweet)
-            :ets.insert(:mentions, {mention, updated_mentions})
+            insert_record(:mentions, {mention, updated_mentions})
         else
             tweets = MapSet.new |> MapSet.put(tweet)
-            :ets.insert(:mentions, {mention, tweets})
+            insert_record(:mentions, {mention, tweets})
         end
     end
 
     defp send_mentions(mention, client, username) do
-        tweets = get_mention_tweets(mention) |> MapSet.to_list() |> Enum.chunk_every(5)
-        Logger.debug "sending mentions: #{inspect(tweets)}"
-        for tweet <- tweets do
+        tweets_chunks = get_mention_tweets(mention) |> MapSet.to_list() |> Enum.chunk_every(5)
+        Logger.debug "sending mentions: #{inspect(tweets_chunks)}"
+        for tweets <- tweets_chunks do
             data = %{"function"=> "mention", "tweets" => tweets, "username" => username}
             send_response(client, data)
             :timer.sleep 20
@@ -307,7 +299,7 @@ defmodule Server do
 
     defp get_hashtag_tweets(hashtag) do
         if member_of_hashtags(hashtag) do
-            :ets.lookup(:hashtags, hashtag)|> List.first |> elem(1) #|> MapSet.to_list()
+            :ets.lookup_element(:hashtags, hashtag, 2)
         else
             MapSet.new
         end
@@ -317,16 +309,16 @@ defmodule Server do
         hashtags = :ets.lookup(:hashtags, hashtag)
         if hashtags != [] do
             updated_tweets = hashtags |> List.first |> elem(1) |> MapSet.put(tweet)
-            :ets.insert(:hashtags, {hashtag, updated_tweets})
+            insert_record(:hashtags, {hashtag, updated_tweets})
         else
             tweets = MapSet.new |> MapSet.put(tweet)
-            :ets.insert(:hashtags, {hashtag, tweets})
+            insert_record(:hashtags, {hashtag, tweets})
         end
     end
 
     defp send_hashtags(hashtag, client, username) do
-        tweets = get_hashtag_tweets(hashtag) |> MapSet.to_list() |> Enum.chunk_every(5)
-        for tweet <- tweets do
+        tweets_chunks = get_hashtag_tweets(hashtag) |> MapSet.to_list() |> Enum.chunk_every(5)
+        for tweets <- tweets_chunks do
             data = %{"function"=> "hashtag", "tweets" => tweets, "username" => username}
             send_response(client, data)
             :timer.sleep 20
@@ -337,8 +329,8 @@ defmodule Server do
         :ets.member(:users, username)
     end
 
-    defp insert(username, status, subscribers, feed, port) do
-        :ets.insert(:users, {username, status, subscribers, feed, port})
+    defp insert_record(table, tuple) do
+        :ets.insert(table, tuple)
     end
 
     defp user_has_feeds(username) do
