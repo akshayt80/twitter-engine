@@ -40,10 +40,10 @@ defmodule Client do
     end
     # number represents number of user which is used in username in simulation mmode
     # users is list of all available users
-    # frequency if :high then every 200 ms one tweet will be sent, :medium every 700ms and :slow every 1200ms
+    # frequency if :high then every 200 ms one tweet will be sent, :medium every 400ms and :slow every 800ms
     def start_link(socket, mode \\ :interactive, username \\ None, users \\ None, frequency \\ :medium) do
         if mode == :interactive do
-            username = IO.gets "Enter username: "
+            username = IO.gets "Enter username(without @ in begining) for registration: "
             username = String.trim(username)
             :ets.new(:incomplete_packet, [:set, :public, :named_table, read_concurrency: true])
             spawn fn -> listen(socket, :incomplete_packet) end
@@ -123,9 +123,9 @@ defmodule Client do
                     hashtag_query(socket, String.trim(hashtag), username)
             "3" -> mention = IO.gets "Enter the username(add @ in begining) to look for: "
                     mention_query(socket, String.trim(mention), username)
-            "4" -> user = IO.gets "Enter the username you want to follow: "
+            "4" -> user = IO.gets "Enter the username you want to follow(without @ in begining): "
                     subscribe(socket, String.split(user, [" ", "\n"], trim: true), username)
-            "5" -> user = IO.gets "Enter the username you want to unsubscribe: "
+            "5" -> user = IO.gets "Enter the username you want to unsubscribe(without @ in begining): "
                     unsubscribe(socket, String.split(user, [" ", "\n"], trim: true), username)
             "6" -> perform_login(socket, username)
             "7" -> perform_logout(socket, username)
