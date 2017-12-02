@@ -39,7 +39,6 @@ defmodule Project4part1 do
         Client.start_link(socket)
       else
         user_count = Enum.at(args, 3) |> String.to_integer
-        subprocess_count = 1
         subprocess_count = if length(args) == 5 do
           Enum.at(args, 4) |> String.to_integer
         else
