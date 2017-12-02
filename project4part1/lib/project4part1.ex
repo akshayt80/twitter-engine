@@ -12,35 +12,35 @@ defmodule Project4part1 do
     - Run as server:
       ./project4part1 server
     - Run as interactive client
-      ./project4part1 client server_ip i
-      e.g. ./project4part1 client 127.0.0.1 i
+      ./project4part1 client server_ip
+      e.g. ./project4part1 client 127.0.0.1
     - Run as simulator
-      ./project4part1 client sevrer_ip s number_of_users number_of_actors
-      e.g. ./project4part1 client 127.0.0.1 i 50 5
+      ./project4part1 simulator sevrer_ip number_of_users number_of_actors
+      e.g. ./project4part1 simulator 127.0.0.1 50 5
 
   """
   require Logger
   def main(args) do
     {_, args, _} = OptionParser.parse(args)
     port = 6666
-    if Enum.at(args, 0) == "server" do
+    mode = Enum.at(args, 0)
+    if mode == "server" do
       Logger.debug "Starting as Server"
       Server.start_link(port)
     else
 
       server_ip = parse_ip(Enum.at(args, 1))
-      mode = Enum.at(args, 2)
       # Connect to server
-      if mode == "i" do
+      if mode == "client" do
         Logger.debug "Establishing Server connection"
         {:ok, socket} = make_connection(server_ip, port)
         Logger.debug "Server Connection Established"
         Logger.debug "Starting as Interactive Client"
         Client.start_link(socket)
       else
-        user_count = Enum.at(args, 3) |> String.to_integer
-        subprocess_count = if length(args) == 5 do
-          Enum.at(args, 4) |> String.to_integer
+        user_count = Enum.at(args, 2) |> String.to_integer
+        subprocess_count = if length(args) == 4 do
+          Enum.at(args, 3) |> String.to_integer
         else
           1
         end
