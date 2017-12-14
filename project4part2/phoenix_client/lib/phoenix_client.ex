@@ -16,40 +16,9 @@ defmodule PhoenixClient do
 
   def main(args) do
     {_, args, _} = OptionParser.parse(args)
-    username = Enum.at(args, 0)
-    start_link("127.0.0.1", 4000, :interactive)
-    # {:ok, pid} = PhoenixChannelClient.start_link()
-
-    # {:ok, socket} = PhoenixChannelClient.connect(pid,
-    #   host: "localhost",
-    #   port: 4000,
-    #   path: "/socket/websocket",
-    #   params: %{token: "something", username: username},
-    #   secure: false)
-
-    # channel = PhoenixChannelClient.channel(socket, "timeline:feed", %{name: "Ryo"})
-
-    # case PhoenixChannelClient.join(channel) do
-    #   {:ok, %{}} -> IO.puts "Successfully joined the channel"
-    #   {:error, %{reason: reason}} -> IO.puts(reason)
-    #   :timeout -> IO.puts("timeout")
-    # end
-
-    # :timer.sleep 5000
-    #  case PhoenixChannelClient.push(channel, "tweet", %{username: username}) do
-    #     #:ok -> IO.puts("pushed the message")
-    #     :ok -> IO.puts("successfully sent message")
-    #     {:error, %{reason: reason}} -> IO.puts(reason)
-    #     :timeout -> IO.puts("timeout")
-    #   end
-    
-
-    # receive do
-    #     {"tweet", message} -> Logger.info "type of message: #{is_map(message)}"
-    #       IO.puts(inspect(message))
-    #     :close -> IO.puts("closed")
-    #     {:error, error} -> ()
-    #   end
+    server_ip = Enum.at(args, 0)
+    port = 4000
+    start_link(server_ip, port, :interactive)
   end
 
   def start_link(server_ip, port, mode \\ :interactive, username \\ None, users \\ None, frequency \\ :medium) do
@@ -69,38 +38,40 @@ defmodule PhoenixClient do
         timeline_channel = channel_connect(pid, username)
         GenServer.start_link(__MODULE__, %{"mode"=> mode, "retweet_prob"=> 10, "status"=> :online}, name: :"#{username}")
 
-        #perform_registration(socket, username)
-        #data = %{"function"=> "register", "username"=> username}
-
         if mode == :interactive do
             spawn_pid = spawn fn -> interactive_client(timeline_channel, username) end
-        #else
-            #simulative_client(socket, username, frequency)
         end
         listen(username, timeline_channel, spawn_pid, pid)
     end
+
     defp channel_connect(pid, username) do
+
       {:ok, socket} = PhoenixChannelClient.connect(pid,
           host: "localhost",
           port: 4000,
           path: "/socket/websocket",
           params: %{token: "something", username: username},
           secure: false)
+
       timeline_channel = PhoenixChannelClient.channel(socket, "timeline:feed", %{username: username})
+      
       case PhoenixChannelClient.join(timeline_channel) do
         {:ok, %{}} -> :ok
         {:error, %{reason: reason}} -> IO.puts(reason)
         :timeout -> IO.puts("timeout")
       end
+
       timeline_channel
+
     end
+
     defp interactive_client(timeline_channel, username) do
-        option = IO.gets "Options:\n1. Tweet\n2. Hashtag query\n3. Mention query\n4. Subscribe\n5. unsubscribe\n6. Login\n7. Logout\nEnter your choice: "
+        option = IO.gets "Options:\n1. Tweet\n2. Hashtag query\n3. Mention query\n4. Subscribe\n5. Unsubscribe\n6. Login\n7. Logout\nEnter your choice: "
         case String.trim(option) do
             "1" -> tweet = IO.gets "Enter tweet: "
                   tweet = String.trim(tweet)
                   send_tweet(timeline_channel, tweet, username)
-            "2" -> hashtag = IO.gets "Enter hashtag to query for: "
+            "2" -> hashtag = IO.gets "Enter hashtag(add # in begining) to query for: "
                     hashtag_query(timeline_channel, String.trim(hashtag), username)
             "3" -> mention = IO.gets "Enter the username(add @ in begining) to look for: "
                     mention_query(timeline_channel, String.trim(mention), username)
@@ -147,11 +118,6 @@ defmodule PhoenixClient do
           Logger.info "username:#{username} sender: #{sender} incoming tweet:- #{tweet}"
           # with probability od 10% do retweet
           mode = map["mode"]
-          if mode != :interactive and :rand.uniform(100) <= map["retweet_prob"] do
-              Logger.debug "username:#{username} doing retweet"
-              data = %{"function"=> "tweet", "username"=> username, "tweet"=> tweet}
-              send_message(socket, "tweet", data)
-          end
           if mode == :interactive do
               input = IO.gets "Want to retweet(y/n)? "
               input = String.trim(input)
@@ -167,10 +133,8 @@ defmodule PhoenixClient do
 
     def handle_cast({:feed, feed}, map) do
         Logger.debug "Incoming feed which was accumulated while you were offline"
-        feed_tweets = 
-        for item <- feed do
-            Logger.info "Tweet: #{item}"
-        end
+        feed_tweets = Enum.join(feed, "\n")
+        Logger.info "Tweets: #{feed_tweets}"
         {:noreply, map}
     end
 
@@ -186,7 +150,7 @@ defmodule PhoenixClient do
 
     def listen(username, timeline_channel, spawn_pid, pid) do
         receive do
-          {"tweet", data} -> Logger.info "incoming tweet data: #{inspect(data)}"
+          {"tweet", data} ->
             if Enum.member?(data["followers"], username) or Enum.member?(data["mentions"], username) do
               GenServer.cast(:"#{username}", {:tweet, username, data["username"], data["tweet"], timeline_channel})
             end
@@ -269,9 +233,7 @@ defmodule PhoenixClient do
     defp send_recv_message(channel, type, message) do
       case PhoenixChannelClient.push_and_receive(channel, type, message, 100) do
         #:ok -> IO.puts("pushed the message")
-        {:ok, data} -> IO.puts("successfully sent message")
-                        IO.puts("incoming data: #{inspect(data)}")
-                        function = data["function"]
+        {:ok, data} -> function = data["function"]
                         username = data["username"]
                         GenServer.cast(:"#{username}", {:"#{function}", data["tweets"]})
         {:error, %{reason: reason}} -> IO.puts(reason)
