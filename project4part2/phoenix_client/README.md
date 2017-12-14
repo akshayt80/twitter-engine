@@ -1,21 +1,14 @@
 # PhoenixClient
 
-**TODO: Add description**
+- We have used phoenix channel client(https://github.com/ryo33/phoenix-channel-client) in order to connect to server using websocket.
 
-## Installation
-
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `phoenix_client` to your list of dependencies in `mix.exs`:
-
-```elixir
-def deps do
-  [
-    {:phoenix_client, "~> 0.1.0"}
-  ]
-end
+- To initialize the client perform the following steps:
+```
+mix deps.get
+mix escript.build
 ```
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at [https://hexdocs.pm/phoenix_client](https://hexdocs.pm/phoenix_client).
-
+- To run the client give the command like:
+```
+./phoenix_client server_ip  i.e. ./phoenix_client 127.0.0.1
+```
