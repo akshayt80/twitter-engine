@@ -1,17 +1,5 @@
 defmodule PhoenixClient do
-  @moduledoc """
-  Documentation for PhoenixClient.
-  """
 
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> PhoenixClient.hello
-      :world
-
-  """
   require Logger
 
   def main(args) do
@@ -35,19 +23,19 @@ defmodule PhoenixClient do
             Logger.debug "username given #{username} with frequency:#{frequency}"
         end
 
-        timeline_channel = channel_connect(pid, username)
+        timeline_channel = channel_connect(pid, username, server_ip)
         GenServer.start_link(__MODULE__, %{"mode"=> mode, "retweet_prob"=> 10, "status"=> :online}, name: :"#{username}")
 
         if mode == :interactive do
             spawn_pid = spawn fn -> interactive_client(timeline_channel, username) end
         end
-        listen(username, timeline_channel, spawn_pid, pid)
+        listen(username, timeline_channel, spawn_pid, pid, server_ip)
     end
 
-    defp channel_connect(pid, username) do
+    defp channel_connect(pid, username, server_ip \\ "127.0.0.1") do
 
       {:ok, socket} = PhoenixChannelClient.connect(pid,
-          host: "localhost",
+          host: server_ip,
           port: 4000,
           path: "/socket/websocket",
           params: %{token: "something", username: username},
@@ -148,20 +136,20 @@ defmodule PhoenixClient do
       {:noreply, map}
     end
 
-    def listen(username, timeline_channel, spawn_pid, pid) do
+    def listen(username, timeline_channel, spawn_pid, pid, server_ip) do
         receive do
           {"tweet", data} ->
             if Enum.member?(data["followers"], username) or Enum.member?(data["mentions"], username) do
               GenServer.cast(:"#{username}", {:tweet, username, data["username"], data["tweet"], timeline_channel})
             end
           :close -> Process.exit(spawn_pid, :kill)
-            timeline_channel = channel_connect(pid, username)
+            timeline_channel = channel_connect(pid, username, server_ip)
             spawn_pid = spawn fn -> interactive_client(timeline_channel, username) end
           {:error, error} -> ()
         after
           5000 -> 
         end
-        listen(username, timeline_channel, spawn_pid, pid)
+        listen(username, timeline_channel, spawn_pid, pid, server_ip)
     end
     defp send_tweet(tweetChannel, tweet, username) do
         data = %{"function"=> "tweet", "username"=> username, "tweet"=> tweet}
