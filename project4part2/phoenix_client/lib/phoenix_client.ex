@@ -33,12 +33,16 @@ defmodule PhoenixClient do
 
     defp channel_connect(pid, username, server_ip \\ "127.0.0.1") do
 
-      {:ok, socket} = PhoenixChannelClient.connect(pid,
+      socket = case PhoenixChannelClient.connect(pid,
           host: server_ip,
           port: 4000,
           path: "/socket/websocket",
           params: %{token: "something", username: username},
-          secure: false)
+          secure: false) do
+         {:ok, socket} -> socket
+         {:error, error_info} -> Logger.error "User already exists"
+            Process.exit(self(), :kill)
+        end
 
       timeline_channel = PhoenixChannelClient.channel(socket, "timeline:feed", %{username: username})
       

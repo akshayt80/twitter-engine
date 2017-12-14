@@ -20,8 +20,13 @@ defmodule Project4part2Web.UserSocket do
   #
   # See `Phoenix.Token` documentation for examples in
   # performing token verification on connect.
-  def connect(_params, socket) do
-    {:ok, socket}
+  def connect(params, socket) do
+    user = ServerUtil.get_user(params["username"])
+    if user != false do
+      :error
+    else
+      {:ok, socket}
+    end
   end
 
   # Socket id's are topics that allow you to identify all sockets for a given user:
