@@ -19,7 +19,6 @@ defmodule PhoenixClient do
             username = IO.gets "Enter username: "
             username = String.trim(username)
         else
-            #username = "user_#{number}"
             Logger.debug "username given #{username} with frequency:#{frequency}"
         end
 
@@ -104,7 +103,6 @@ defmodule PhoenixClient do
     def handle_cast({:tweet, username, sender, tweet, socket}, map) do
         if map["status"] == :online do
           Logger.info "username:#{username} sender: #{sender} incoming tweet:- #{tweet}"
-          # with probability od 10% do retweet
           mode = map["mode"]
           if mode == :interactive do
               input = IO.gets "Want to retweet(y/n)? "
@@ -178,26 +176,11 @@ defmodule PhoenixClient do
             send_message(socket, "unsubscribe", data)
         end
     end
-    def process_feed(feed) do
-        Logger.debug "Incoming feed"
-        for item <- feed do
-            Logger.info "Tweet: #{item}"
-        end
-    end
-    def perform_logout(server, username, autologin \\ false) do
+    def perform_logout(server, username) do
         # send logout message
         data = %{"function"=> "logout", "username"=> username}
         GenServer.cast(:"#{username}", {:logout})
-        # TODO:- complete login and logout logic maybe leave all the channels a user has subscribed to and join back when he comes online and handle online users in server before broadcasting message or another solution would be to just not print the tweets when a user is offline and print all at once 
         send_message(server, "logout", data)
-        # sleep for some random time between 1 to 10 sec
-        if autologin do
-            sec = :rand.uniform(5000)
-            Logger.debug "#{username} sleeping for #{sec} seconds"
-            :timer.sleep sec
-            # send login back to server
-            perform_login(server, username)
-        end
     end
 
     defp perform_login(server, username) do
@@ -212,7 +195,6 @@ defmodule PhoenixClient do
     end
     defp send_message(channel, type, message) do
       case PhoenixChannelClient.push(channel, type, message) do
-        #:ok -> IO.puts("pushed the message")
         :ok -> IO.puts("successfully sent message")
         {:error, %{reason: reason}} -> IO.puts(reason)
         :timeout -> IO.puts("timeout")
@@ -220,7 +202,6 @@ defmodule PhoenixClient do
     end
     defp send_recv_message(channel, type, message) do
       case PhoenixChannelClient.push_and_receive(channel, type, message, 100) do
-        #:ok -> IO.puts("pushed the message")
         {:ok, data} -> function = data["function"]
                         username = data["username"]
                         GenServer.cast(:"#{username}", {:"#{function}", data["tweets"]})
